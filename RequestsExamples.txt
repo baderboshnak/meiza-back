@@ -1,0 +1,243 @@
+Here’s a concise API guide your React dev can use.
+Headers for JSON: Content-Type: application/json.
+Auth where required: Authorization: Bearer <JWT>.
+
+Auth
+POST /auth/register
+
+Creates a user and returns a token.
+Body:
+
+{ "name":"Osama", "email":"o@x.com", "password":"secret123", "roles":["customer"] }
+
+
+Response:
+
+{ "token":"<JWT>", "user":{ "_id":"...", "name":"Osama", "email":"o@x.com", "roles":["customer"] } }
+
+POST /auth/login
+
+Logs in and returns a token.
+Body:
+
+{ "email":"o@x.com", "password":"secret123" }
+
+
+Response same shape as register.
+
+GET /auth/me (requires auth)
+
+Returns current user.
+Headers: Authorization: Bearer <JWT>
+Response:
+
+{ "user": { "_id":"...", "name":"Osama", "email":"o@x.com", "roles":["customer"], "isActive":true } }
+
+Categories (public)
+POST /categories
+
+Create a category.
+Body:
+
+{ "name":"כלי בית", "img":"https://..." }
+
+GET /categories
+
+List categories.
+Response:
+
+[ { "_id":"...", "name":"כלי בית", "img":"...", "createdAt":"...", "updatedAt":"..." } ]
+
+GET /categories/:id
+
+Get one category.
+
+PUT /categories/:id
+
+Replace all fields.
+Body (example):
+
+{ "name":"מתנות", "img":"https://..." }
+
+PATCH /categories/:id
+
+Partial update.
+Body:
+
+{ "img":"https://new.png" }
+
+DELETE /categories/:id
+
+Deletes the category if no products reference it.
+Response:
+
+{ "deleted": true, "id":"..." }
+
+
+If in use:
+
+{ "error":"Category in use by products", "products_count": 3 }
+
+Products (public)
+POST /products
+
+Create product.
+Body (matches your schema):
+
+{
+  "name":"פלייסמט שעבניה",
+  "desc":"",
+  "category":"6904a59ce067d10d56fe4f31",
+  "options":[
+    { "name":"30/50 שילוב עור", "price":58, "isDefault":true, "quantity":10, "img":"", "sale":{ "start":"","end":"","price":null } }
+  ]
+}
+
+GET /products
+
+List products (category is populated if your model is registered).
+
+GET /products/:id
+
+Get one product.
+
+PUT /products/:id
+
+Replace product.
+Body: full product object.
+
+PATCH /products/:id
+
+Partial update.
+Body (example):
+
+{ "desc":"תיאור חדש" }
+
+DELETE /products/:id
+
+Delete product.
+
+POST /products/seed
+
+Inserts your three sample products once.
+Response:
+
+{ "inserted": 3, "products":[ ... ] }
+
+Users (admin only, requires auth)
+
+All requests must include Authorization: Bearer <JWT> for an admin.
+
+POST /users
+
+Create user.
+Body:
+
+{ "name":"Admin", "email":"a@x.com", "password":"secret123", "roles":["admin"] }
+
+GET /users
+
+List users.
+
+GET /users/:id
+
+Get user by id.
+
+PUT /users/:id
+
+Replace user. If changing password, send full body.
+
+PATCH /users/:id
+
+Partial update. If changing password, it will be re-hashed.
+
+DELETE /users/:id
+
+Delete user.
+
+Cart (requires auth)
+
+Cart is per user. One cart per user.
+
+GET /cart
+
+Get my cart.
+Response:
+
+{ "cart": { "_id":"...", "user":"...", "items":[ { "_id":"...", "product":"...", "optionId":"...", "name":"...", "optionName":"...", "img":"...", "price":120, "quantity":2 } ] }, "subtotal": 240 }
+
+POST /cart/items
+
+Add item to cart.
+Body:
+
+{ "productId":"<product _id>", "optionId":"<option _id>", "quantity":1 }
+
+
+Response: current cart + subtotal.
+
+PATCH /cart/items/:itemId
+
+Update quantity of an item.
+Body:
+
+{ "quantity": 3 }
+
+DELETE /cart/items/:itemId
+
+Remove item from cart.
+
+DELETE /cart
+
+Clear cart.
+
+Orders
+POST /orders/checkout (requires auth)
+
+Creates an order from the user’s cart, decrements stock in a Mongo transaction, clears cart.
+Body:
+
+{
+  "shipping": {
+    "fullName":"Osama",
+    "phone":"050-0000000",
+    "addressLine1":"Street 1",
+    "city":"Haifa",
+    "postalCode":"12345",
+    "country":"IL"
+  },
+  "shippingPrice": 25,
+  "paymentMethod": "cod"   // "cod" | "card" | "paypal"
+}
+
+
+Response:
+
+{
+  "_id":"...",
+  "user":"...",
+  "items":[ { "product":"...", "optionId":"...", "name":"...", "optionName":"...", "img":"...", "price":120, "quantity":2 } ],
+  "totals": { "subtotal":240, "shipping":25, "grandTotal":265 },
+  "status":"pending",
+  "payment": { "method":"cod" },
+  "shipping": { "...": "..." }
+}
+
+GET /orders/my (requires auth)
+
+User’s orders list.
+
+GET /orders/:id (requires auth)
+
+Owner or admin can view specific order.
+
+GET /orders (admin only, requires auth)
+
+List all orders.
+
+PATCH /orders/:id/status (admin only, requires auth)
+
+Update order status.
+Body:
+
+{ "status":"shipped" }  // allowed: pending | paid | shipped | completed | canceled
