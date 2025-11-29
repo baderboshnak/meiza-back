@@ -191,15 +191,17 @@ router.delete("/items/:itemId", auth, async (req, res, next) => {
 });
 
 // CLEAR
+// CLEAR
 router.delete("/", auth, async (req, res, next) => {
   try {
     const cart = await getOrCreateCart(req.user._id);
     cart.items = [];
     await cart.save();
-    return res.json({ cleared: true });
+    return res.json({ cart, subtotal: cart.subtotal() }); // 👈 להחזיר cart + subtotal
   } catch (e) {
     next(e);
   }
 });
+
 
 module.exports = router;
