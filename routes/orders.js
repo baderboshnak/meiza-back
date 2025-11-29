@@ -5,6 +5,7 @@ const Order = require("../models/order");
 const Product = require("../models/products");
 const { auth, requireRole } = require("../middleware/auth");
 const { sendWhatsAppMessage } = require("../utils/whatsapp");
+const { sendEmail } = require("../utils/email");
 const router = express.Router();
 
 router.post("/checkout", auth, async (req, res) => {
@@ -90,12 +91,58 @@ router.post("/checkout", auth, async (req, res) => {
     console.log("Transaction committed for order:", order._id);
 
     // 6) send WhatsApp messages
-    try {
-      console.log("ADMIN_PHONE env:", process.env.ADMIN_PHONE);
-      console.log("Order shipping phone:", order.shipping?.phone);
+//     try {
+//       console.log("ADMIN_PHONE env:", process.env.ADMIN_PHONE);
+//       console.log("Order shipping phone:", order.shipping?.phone);
 
-      const adminMsg = `
-🛍️ *New Order Created*
+//       const adminMsg = `
+// 🛍️ *New Order Created*
+// Order ID: ${order._id}
+
+// Customer: ${order.shipping.fullName || "-"}
+// Phone: ${order.shipping.phone || "-"}
+// City: ${order.shipping.city || "-"}
+// Street: ${order.shipping.addressLine1 || "-"}
+
+// Total: ${order.totals.grandTotal}₪
+// Payment: ${order.payment.method}
+//       `.trim();
+
+//       if (process.env.ADMIN_PHONE) {
+//         console.log("[WA] Sending to admin...");
+//         await sendWhatsAppMessage(process.env.ADMIN_PHONE, adminMsg);
+//         console.log("[WA] Admin message sent");
+//       } else {
+//         console.warn("[WA] ADMIN_PHONE is not set in env");
+//       }
+
+//       if (order.shipping.phone) {
+//         const customerMsg = `💛 תודה שקניתם ב-MEIZA HERITAGE!
+// הזמנה #${order._id} התקבלה בהצלחה.
+// סכום כולל: ${order.totals.grandTotal}₪`;
+
+//         console.log("[WA] Sending to customer:", order.shipping.phone);
+//         await sendWhatsAppMessage(order.shipping.phone, customerMsg);
+//         console.log("[WA] Customer message sent");
+//       } else {
+//         console.warn("[WA] No shipping.phone on order, skipping customer WA");
+//       }
+//     } catch (waErr) {
+//       console.error(
+//         "[WA] WhatsApp send failed:",
+//         waErr?.response?.data || waErr.message || waErr
+//       );
+//     }
+
+  try {
+      console.log("GMAIL_USER env:", process.env.GMAIL_USER);
+      console.log("Order shipping email:", order.shipping?.email);
+
+      // -------- Admin email --------
+      const adminSubject = `New Order #${order._id} - Meiza Heritage`;
+      const adminText = `
+New order created.
+
 Order ID: ${order._id}
 
 Customer: ${order.shipping.fullName || "-"}
@@ -107,32 +154,30 @@ Total: ${order.totals.grandTotal}₪
 Payment: ${order.payment.method}
       `.trim();
 
-      if (process.env.ADMIN_PHONE) {
-        console.log("[WA] Sending to admin...");
-        await sendWhatsAppMessage(process.env.ADMIN_PHONE, adminMsg);
-        console.log("[WA] Admin message sent");
+      if (process.env.ADMIN_EMAIL) {
+        console.log("[MAIL] Sending to admin...");
+        await sendEmail(process.env.ADMIN_EMAIL, adminSubject, adminText);
+        console.log("[MAIL] Admin email sent");
       } else {
-        console.warn("[WA] ADMIN_PHONE is not set in env");
+        console.warn("[MAIL] ADMIN_EMAIL is not set in env");
       }
 
-      if (order.shipping.phone) {
-        const customerMsg = `💛 תודה שקניתם ב-MEIZA HERITAGE!
+      // -------- Customer email --------
+      if (order.shipping.email) {
+        const custSubject = `הזמנה #${order._id} נקלטה - MEIZA HERITAGE`;
+        const custText = `💛 תודה שקניתם ב-MEIZA HERITAGE!
 הזמנה #${order._id} התקבלה בהצלחה.
 סכום כולל: ${order.totals.grandTotal}₪`;
 
-        console.log("[WA] Sending to customer:", order.shipping.phone);
-        await sendWhatsAppMessage(order.shipping.phone, customerMsg);
-        console.log("[WA] Customer message sent");
+        console.log("[MAIL] Sending to customer:", order.shipping.email);
+        await sendEmail(order.shipping.email, custSubject, custText);
+        console.log("[MAIL] Customer email sent");
       } else {
-        console.warn("[WA] No shipping.phone on order, skipping customer WA");
+        console.warn("[MAIL] No shipping.email on order, skipping customer email");
       }
-    } catch (waErr) {
-      console.error(
-        "[WA] WhatsApp send failed:",
-        waErr?.response?.data || waErr.message || waErr
-      );
+    } catch (mailErr) {
+      console.error("[MAIL] Email send failed:", mailErr.message || mailErr);
     }
-
     // 7) populate user for frontend
     const populated = await Order.findById(order._id)
       .populate("user", "username name")

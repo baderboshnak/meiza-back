@@ -12,7 +12,7 @@ if (!instanceId || !token) {
   });
 }
 else{
-    console.log("instance and token works:",instanceId,token);
+    console.log("instance and token works:",instanceId,token);  
 }
 
 function normalizePhone(phone) {
