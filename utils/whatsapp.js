@@ -1,6 +1,20 @@
 // utils/whatsapp.js
 const axios = require("axios");
 
+// read env once at module load
+const instanceId = process.env.WA_ID;
+const token = process.env.WA_TOKEN;
+
+if (!instanceId || !token) {
+  console.warn("[WA] ENV missing", {
+    hasInstanceId: !!instanceId,
+    hasToken: !!token,
+  });
+}
+else{
+    console.log("instance and token works:",instanceId,token);
+}
+
 function normalizePhone(phone) {
   // simple Israel example: "050-1234567" -> "972501234567"
   const digits = String(phone).replace(/\D/g, "");
@@ -13,11 +27,8 @@ async function sendWhatsAppMessage(rawPhone, text) {
   const phone = normalizePhone(rawPhone);
   console.log("[WA] sendWhatsAppMessage called", { rawPhone, phone, text });
 
-  const instanceId = process.env.GREENAPI_INSTANCE_ID;
-  const token = process.env.GREENAPI_TOKEN;
-
   if (!instanceId || !token) {
-    console.error("[WA] GREENAPI_INSTANCE_ID or GREENAPI_TOKEN missing");
+    console.error("[WA] WA_ID or WA_TOKEN missing");
     throw new Error("WhatsApp credentials not configured");
   }
 
