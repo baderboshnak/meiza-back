@@ -163,14 +163,14 @@ Payment: ${order.payment.method}
       }
 
       // -------- Customer email --------
-      if (order.shipping.email) {
+      if (order.shipping.addressLine2) {
         const custSubject = `הזמנה #${order._id} נקלטה - MEIZA HERITAGE`;
         const custText = `💛 תודה שקניתם ב-MEIZA HERITAGE!
 הזמנה #${order._id} התקבלה בהצלחה.
 סכום כולל: ${order.totals.grandTotal}₪`;
 
-        console.log("[MAIL] Sending to customer:", order.shipping.email);
-        await sendEmail(order.shipping.email, custSubject, custText);
+        console.log("[MAIL] Sending to customer:", order.shipping.note);
+        await sendEmail(order.shipping.addressLine2, custSubject, custText);
         console.log("[MAIL] Customer email sent");
       } else {
         console.warn("[MAIL] No shipping.email on order, skipping customer email");
