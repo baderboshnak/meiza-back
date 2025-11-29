@@ -96,6 +96,26 @@ app.use("/users", auth, usersRouter);
 app.use("/cart", auth, cartRouter);
 app.use("/orders", auth, ordersRouter);
 
+app.get("/webhook", (req, res) => {
+  const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN;
+
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (mode && token && mode === "subscribe" && token === verifyToken) {
+    console.log("Webhook verified successfully.");
+    return res.status(200).send(challenge);
+  }
+
+  return res.sendStatus(403);
+});
+
+app.post("/webhook", (req, res) => {
+  console.log("Webhook event:", JSON.stringify(req.body, null, 2));
+  res.sendStatus(200); // Always respond fast
+});
+
 // 404
 app.use((req, res) => res.status(404).json({ error: "Not found" }));
 
