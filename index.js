@@ -21,6 +21,7 @@ const cartRouter = require("./routes/cart");
 const ordersRouter = require("./routes/orders");
 const contactRoutes = require("./routes/contact");
 const cloudinaryRoutes =require("./routes/cloudinary.js");
+const { sendWhatsApp } = require("./utils/twilioWhatsapp");
 
 
 // auth middleware
@@ -115,6 +116,37 @@ app.post("/webhook", (req, res) => {
   console.log("Webhook event:", JSON.stringify(req.body, null, 2));
   res.sendStatus(200); // Always respond fast
 });
+
+
+
+function normalizePhone(phone) {
+  // simple Israel example: "050-1234567" -> "972501234567"
+  const digits = String(phone).replace(/\D/g, "");
+  if (digits.startsWith("0")) return "972" + digits.slice(1);
+  if (digits.startsWith("972")) return digits;
+  return digits;
+}
+app.post("/order-confirmation", async (req, res) => {
+  try {
+    // const { message } = req.body;
+    // if ( !message) {
+    //   return res.status(400).json({ error: "phone and message are required" });
+    // }
+
+    // const normalized = normalizePhone
+    //   ? normalizePhone(phone)       // "050..." → "+97250..."
+    //   : phone;                      // otherwise send E.164 directly
+
+    const msg = await sendWhatsApp("+972543596761", "message");
+
+    res.json({ success: true, sid: msg.sid });
+  } catch (err) {
+    console.error("[TWILIO] send error:", err.message);
+    res.status(500).json({ error: "Failed to send WhatsApp message" });
+  }
+});
+
+
 
 // 404
 app.use((req, res) => res.status(404).json({ error: "Not found" }));
