@@ -5,7 +5,11 @@ const Order = require("../models/order");
 const Product = require("../models/products");
 const { auth, requireRole } = require("../middleware/auth");
 const { sendWhatsAppMessage } = require("../utils/whatsapp");
-const { sendEmail } = require("../utils/email");
+const {
+  sendEmail,
+  buildOrderAdminEmail,
+  buildOrderCustomerEmail,
+} = require("../utils/email");
 const router = express.Router();
 
 router.post("/checkout", auth, async (req, res) => {
@@ -134,53 +138,45 @@ router.post("/checkout", auth, async (req, res) => {
 //       );
 //     }
 
-   try {
-      console.log("EMAIL_FROM env:", process.env.EMAIL_FROM);
-      console.log("ADMIN_EMAIL env:", process.env.ADMIN_EMAIL);
-      console.log("Order shipping email:", order.shipping?.email);
+  try {
+  console.log("EMAIL_FROM env:", process.env.EMAIL_FROM);
+  console.log("ADMIN_EMAIL env:", process.env.ADMIN_EMAIL);
+  console.log("Order shipping email:", order.shipping?.email);
 
-      // -------- Admin email --------
-      const adminSubject = `New Order #${order._id} - Meiza Heritage`;
-      const adminText = `
-New order created.
+  // -------- Admin email --------
+  if (process.env.ADMIN_EMAIL) {
+    const adminMail = buildOrderAdminEmail(order);
 
-Order ID: ${order._id}
+    console.log("[MAIL] Sending admin order email...");
+    await sendEmail(
+      process.env.ADMIN_EMAIL,
+      adminMail.subject,
+      adminMail.text,
+      adminMail.html
+    );
+    console.log("[MAIL] Admin email sent");
+  } else {
+    console.warn("[MAIL] ADMIN_EMAIL is not set in env");
+  }
 
-Customer: ${order.shipping.fullName || "-"}
-Phone: ${order.shipping.phone || "-"}
-City: ${order.shipping.city || "-"}
-Street: ${order.shipping.addressLine1 || "-"}
+  // -------- Customer email --------
+  if (order.shipping.email) {
+    const custMail = buildOrderCustomerEmail(order);
 
-Total: ${order.totals.grandTotal}₪
-Payment: ${order.payment.method}
-      `.trim();
-
-      if (process.env.ADMIN_EMAIL) {
-        console.log("[MAIL] Sending to admin...");
-        await sendEmail(process.env.ADMIN_EMAIL, adminSubject, adminText);
-        console.log("[MAIL] Admin email sent");
-      } else {
-        console.warn("[MAIL] ADMIN_EMAIL is not set in env");
-      }
-
-      // -------- Customer email --------
-      if (order.shipping.email) {
-        const custSubject = `הזמנה #${order._id} נקלטה - MEIZA HERITAGE`;
-        const custText = `
-💛 תודה שקניתם ב-MEIZA HERITAGE!
-הזמנה #${order._id} התקבלה בהצלחה.
-סכום כולל: ${order.totals.grandTotal}₪
-        `.trim();
-
-        console.log("[MAIL] Sending to customer:", order.shipping.email);
-        await sendEmail(order.shipping.email, custSubject, custText);
-        console.log("[MAIL] Customer email sent");
-      } else {
-        console.warn("[MAIL] No shipping.email on order, skipping customer email");
-      }
-    } catch (mailErr) {
-      console.error("[MAIL] Email send failed:", mailErr.message || mailErr);
-    }
+    console.log("[MAIL] Sending customer order email to:", order.shipping.email);
+    await sendEmail(
+      order.shipping.email,
+      custMail.subject,
+      custMail.text,
+      custMail.html
+    );
+    console.log("[MAIL] Customer email sent");
+  } else {
+    console.warn("[MAIL] No shipping.email on order, skipping customer email");
+  }
+} catch (mailErr) {
+  console.error("[MAIL] Email send failed:", mailErr.message || mailErr);
+}
 
     // 7) populate user for frontend
     const populated = await Order.findById(order._id)
