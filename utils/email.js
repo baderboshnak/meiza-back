@@ -159,22 +159,34 @@ function buildOrderCustomerEmail(order) {
   const grandTotal = order.totals?.grandTotal ?? 0;
 
   const content = `
-    <p style="margin:0 0 12px;font-size:14px;color:#111;">
-      תודה רבה שקניתם ב-<strong>MEIZA HERITAGE</strong>! 💛
-    </p>
-    <p style="margin:0 0 12px;font-size:14px;color:#333;">
-      ההזמנה <strong>#${order._id}</strong> נקלטה בהצלחה.
-    </p>
+    <div style="font-size:14px;color:#111;line-height:1.7;direction:rtl;text-align:right;">
+      <p style="margin:0 0 8px;">
+        תודה רבה שקניתם ב-<strong>MEIZA HERITAGE</strong> 💛
+      </p>
 
-    <div style="font-size:14px;color:#222;margin-bottom:16px;">
-      <strong>סכום כולל:</strong> ₪${grandTotal.toLocaleString("he-IL")}<br/>
-      <strong>עיר:</strong> ${order.shipping?.city || "-"}<br/>
-      <strong>רחוב:</strong> ${order.shipping?.addressLine1 || "-"}
+      <p style="margin:0 0 8px;">
+        ההזמנה <span dir="ltr">#${order._id}</span> נקלטה בהצלחה.
+      </p>
+
+      <p style="margin:0 0 8px;">
+        <strong>סכום כולל:</strong>
+        ₪${grandTotal.toLocaleString("he-IL")}
+      </p>
+
+      <p style="margin:0 0 8px;">
+        <strong>עיר:</strong>
+        ${order.shipping?.city || "-"}
+      </p>
+
+      <p style="margin:0 0 8px;">
+        <strong>רחוב:</strong>
+        ${order.shipping?.addressLine1 || "-"}
+      </p>
+
+      <p style="margin:16px 0 0;font-size:13px;color:#555;">
+        נעדכן אתכם בוואטסאפ / אימייל כאשר ההזמנה תצא לדרך.
+      </p>
     </div>
-
-    <p style="margin:0;font-size:13px;color:#555;">
-      נעדכן אתכם בוואטסאפ / אימייל כאשר ההזמנה תצא לדרך.
-    </p>
   `;
 
   const html = baseTemplate({
@@ -182,13 +194,15 @@ function buildOrderCustomerEmail(order) {
     intro: `היי ${order.shipping?.fullName || ""}, ההזמנה שלך התקבלה!`,
     content,
     footer: "אם יש לכם שאלות, אפשר לענות למייל הזה ונחזור אליכם בהקדם.",
-    rtl: true, // <<< Hebrew RTL
+    rtl: true, // חשוב: מצב ימין-לשמאל
   });
 
   const text = `
 תודה שקניתם ב-MEIZA HERITAGE!
 הזמנה #${order._id} התקבלה בהצלחה.
 סכום כולל: ${grandTotal}₪
+עיר: ${order.shipping?.city || "-"}
+רחוב: ${order.shipping?.addressLine1 || "-"}
   `.trim();
 
   return {
@@ -197,6 +211,7 @@ function buildOrderCustomerEmail(order) {
     html,
   };
 }
+
 
 // ---------- CONTACT TEMPLATE (ADMIN) ----------
 
