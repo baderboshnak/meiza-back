@@ -2,27 +2,36 @@
 const { Resend } = require("resend");
 
 // Better: use env var in Render
-const resend = new Resend(process.env.RESEND_API_KEY || "re_FCVimFQg_BFS6h7vHN4VpL2grPSDXANes");
+const resend = new Resend(
+  process.env.RESEND_API_KEY || "re_FCVimFQg_BFS6h7vHN4VpL2grPSDXANes"
+);
 
-function baseTemplate({ title, intro, content, footer }) {
+// -------- BASE TEMPLATE (LTR / RTL) --------
+function baseTemplate({ title, intro, content, footer, rtl = false }) {
+  const dir = rtl ? "rtl" : "ltr";
+  const align = rtl ? "right" : "left";
+  const textAlignStyle = rtl
+    ? "direction:rtl;text-align:right;"
+    : "direction:ltr;text-align:left;";
+
   return `
-  <div style="background-color:#f5f5f5;padding:24px 0;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-    <table width="100%" cellspacing="0" cellpadding="0">
+  <div dir="${dir}" style="background-color:#f5f5f5;padding:24px 0;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;${textAlignStyle}">
+    <table width="100%" cellspacing="0" cellpadding="0" style="${textAlignStyle}">
       <tr>
         <td align="center">
-          <table width="600" cellspacing="0" cellpadding="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 6px 18px rgba(0,0,0,0.06);">
+          <table width="600" cellspacing="0" cellpadding="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 6px 18px rgba(0,0,0,0.06);${textAlignStyle}">
             <tr>
-              <td style="background:linear-gradient(135deg,#1a1a1a,#B58B3B);padding:20px 24px;color:#fff;">
-                <h1 style="margin:0;font-size:22px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;">
+              <td style="background:linear-gradient(135deg,#1a1a1a,#B58B3B);padding:20px 24px;color:#fff;${textAlignStyle}">
+                <h1 style="margin:0;font-size:22px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase; text-align:${align};">
                   MEIZA HERITAGE
                 </h1>
-                <p style="margin:4px 0 0;font-size:13px;opacity:0.9;">${title}</p>
+                <p style="margin:4px 0 0;font-size:13px;opacity:0.9;text-align:${align};">${title}</p>
               </td>
             </tr>
 
             <tr>
-              <td style="padding:24px 24px 8px;">
-                <p style="margin:0 0 16px;font-size:15px;color:#111111;line-height:1.6;">
+              <td style="padding:24px 24px 8px;${textAlignStyle}">
+                <p style="margin:0 0 16px;font-size:15px;color:#111111;line-height:1.6;text-align:${align};">
                   ${intro}
                 </p>
                 ${content}
@@ -30,11 +39,11 @@ function baseTemplate({ title, intro, content, footer }) {
             </tr>
 
             <tr>
-              <td style="padding:16px 24px 20px;">
-                <p style="margin:0 0 8px;font-size:12px;color:#555555;line-height:1.5;">
+              <td style="padding:16px 24px 20px;${textAlignStyle}">
+                <p style="margin:0 0 8px;font-size:12px;color:#555555;line-height:1.5;text-align:${align};">
                   ${footer || "For any questions, reply to this email and we will be happy to help."}
                 </p>
-                <p style="margin:0;font-size:11px;color:#9b9b9b;">
+                <p style="margin:0;font-size:11px;color:#9b9b9b;text-align:${align};">
                   © ${new Date().getFullYear()} Meiza Heritage. All rights reserved.
                 </p>
               </td>
@@ -66,12 +75,16 @@ function buildOrderAdminEmail(order) {
           ${it.quantity}
         </td>
         <td style="padding:8px 0;border-bottom:1px solid #eee;font-size:13px;color:#555;" align="right">
-          ₪${it.price.toLocaleString("he-IL")}
+          ₪${(it.price ?? 0).toLocaleString("he-IL")}
         </td>
       </tr>
     `
     )
     .join("");
+
+  const subtotal = order.totals?.subtotal ?? 0;
+  const shipping = order.totals?.shipping ?? 0;
+  const grandTotal = order.totals?.grandTotal ?? 0;
 
   const content = `
     <div style="font-size:14px;color:#222;margin-bottom:18px;">
@@ -98,15 +111,15 @@ function buildOrderAdminEmail(order) {
     <div style="font-size:14px;color:#111;">
       <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
         <span>Subtotal:</span>
-        <span>₪${order.totals?.subtotal.toLocaleString("he-IL")}</span>
+        <span>₪${subtotal.toLocaleString("he-IL")}</span>
       </div>
       <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
         <span>Shipping:</span>
-        <span>₪${order.totals?.shipping.toLocaleString("he-IL")}</span>
+        <span>₪${shipping.toLocaleString("he-IL")}</span>
       </div>
       <div style="display:flex;justify-content:space-between;margin-top:8px;font-weight:700;">
         <span>Total:</span>
-        <span>₪${order.totals?.grandTotal.toLocaleString("he-IL")}</span>
+        <span>₪${grandTotal.toLocaleString("he-IL")}</span>
       </div>
       <div style="margin-top:4px;font-size:13px;color:#555;">
         Payment method: ${order.payment?.method || "-"}
@@ -119,6 +132,7 @@ function buildOrderAdminEmail(order) {
     intro: "A new order has been placed on the Meiza Heritage website.",
     content,
     footer: "Please prepare this order and contact the customer if needed.",
+    rtl: false,
   });
 
   const text = `
@@ -130,7 +144,7 @@ Phone: ${order.shipping?.phone || "-"}
 City: ${order.shipping?.city || "-"}
 Street: ${order.shipping?.addressLine1 || "-"}
 
-Total: ${order.totals?.grandTotal}₪
+Total: ${grandTotal}₪
 Payment: ${order.payment?.method}
   `.trim();
 
@@ -142,6 +156,8 @@ Payment: ${order.payment?.method}
 }
 
 function buildOrderCustomerEmail(order) {
+  const grandTotal = order.totals?.grandTotal ?? 0;
+
   const content = `
     <p style="margin:0 0 12px;font-size:14px;color:#111;">
       תודה רבה שקניתם ב-<strong>MEIZA HERITAGE</strong>! 💛
@@ -151,7 +167,7 @@ function buildOrderCustomerEmail(order) {
     </p>
 
     <div style="font-size:14px;color:#222;margin-bottom:16px;">
-      <strong>סכום כולל:</strong> ₪${order.totals?.grandTotal.toLocaleString("he-IL")}<br/>
+      <strong>סכום כולל:</strong> ₪${grandTotal.toLocaleString("he-IL")}<br/>
       <strong>עיר:</strong> ${order.shipping?.city || "-"}<br/>
       <strong>רחוב:</strong> ${order.shipping?.addressLine1 || "-"}
     </div>
@@ -162,16 +178,17 @@ function buildOrderCustomerEmail(order) {
   `;
 
   const html = baseTemplate({
-    title: "Order confirmation",
+    title: "אישור הזמנה",
     intro: `היי ${order.shipping?.fullName || ""}, ההזמנה שלך התקבלה!`,
     content,
     footer: "אם יש לכם שאלות, אפשר לענות למייל הזה ונחזור אליכם בהקדם.",
+    rtl: true, // <<< Hebrew RTL
   });
 
   const text = `
 תודה שקניתם ב-MEIZA HERITAGE!
 הזמנה #${order._id} התקבלה בהצלחה.
-סכום כולל: ${order.totals?.grandTotal}₪
+סכום כולל: ${grandTotal}₪
   `.trim();
 
   return {
@@ -205,6 +222,7 @@ function buildContactAdminEmail({ name, email, message }) {
     intro: "You received a new message from the Meiza Heritage website.",
     content,
     footer: "Reply directly to the customer's email address above.",
+    rtl: false,
   });
 
   const text = `
@@ -235,7 +253,9 @@ async function sendEmail(to, subject, text, html) {
     to,
     subject,
     text,
-    html: html || `<pre style="font-family: sans-serif; white-space: pre-wrap;">${text}</pre>`,
+    html:
+      html ||
+      `<pre style="font-family: sans-serif; white-space: pre-wrap;">${text}</pre>`,
   };
 
   try {
