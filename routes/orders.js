@@ -134,8 +134,9 @@ router.post("/checkout", auth, async (req, res) => {
 //       );
 //     }
 
-  try {
-      console.log("GMAIL_USER env:", process.env.GMAIL_USER);
+   try {
+      console.log("EMAIL_FROM env:", process.env.EMAIL_FROM);
+      console.log("ADMIN_EMAIL env:", process.env.ADMIN_EMAIL);
       console.log("Order shipping email:", order.shipping?.email);
 
       // -------- Admin email --------
@@ -163,14 +164,16 @@ Payment: ${order.payment.method}
       }
 
       // -------- Customer email --------
-      if (order.shipping.addressLine2) {
+      if (order.shipping.email) {
         const custSubject = `הזמנה #${order._id} נקלטה - MEIZA HERITAGE`;
-        const custText = `💛 תודה שקניתם ב-MEIZA HERITAGE!
+        const custText = `
+💛 תודה שקניתם ב-MEIZA HERITAGE!
 הזמנה #${order._id} התקבלה בהצלחה.
-סכום כולל: ${order.totals.grandTotal}₪`;
+סכום כולל: ${order.totals.grandTotal}₪
+        `.trim();
 
-        console.log("[MAIL] Sending to customer:", order.shipping.note);
-        await sendEmail(order.shipping.addressLine2, custSubject, custText);
+        console.log("[MAIL] Sending to customer:", order.shipping.email);
+        await sendEmail(order.shipping.email, custSubject, custText);
         console.log("[MAIL] Customer email sent");
       } else {
         console.warn("[MAIL] No shipping.email on order, skipping customer email");
@@ -178,6 +181,7 @@ Payment: ${order.payment.method}
     } catch (mailErr) {
       console.error("[MAIL] Email send failed:", mailErr.message || mailErr);
     }
+
     // 7) populate user for frontend
     const populated = await Order.findById(order._id)
       .populate("user", "username name")

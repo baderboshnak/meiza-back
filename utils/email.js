@@ -1,35 +1,40 @@
 // utils/email.js
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 465,
-  secure: true, // true for 465
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_PASS, // app password
-  },
-});
+const resend = new Resend('re_FCVimFQg_BFS6h7vHN4VpL2grPSDXANes');
 
 /**
- * Send an email via Gmail
- * @param {string|string[]} to
- * @param {string} subject
- * @param {string} text
- * @param {string} [html]
+ * Simple email helper using Resend.
+ * @param {string|string[]} to - Recipient email(s)
+ * @param {string} subject - Subject line
+ * @param {string} text - Plain text body
+ * @param {string} [html] - Optional HTML body (if not given, generated from text)
  */
 async function sendEmail(to, subject, text, html) {
-  const mailOptions = {
-    from: `"Meiza Heritage" <${process.env.GMAIL_USER}>`,
+  
+
+  const from =
+    process.env.EMAIL_FROM || "Meiza Heritage <onboarding@resend.dev>";
+
+  const payload = {
+    from,
     to,
     subject,
     text,
-    ...(html ? { html } : {}),
+    html: html || `<pre style="font-family: sans-serif; white-space: pre-wrap;">${text}</pre>`,
   };
 
-  const info = await transporter.sendMail(mailOptions);
-  console.log("Email sent:", info.messageId);
-  return info;
+  try {
+    const result = await resend.emails.send(payload);
+    console.log("[MAIL] Resend response:", result);
+    return result;
+  } catch (err) {
+    console.error(
+      "[MAIL] Resend error:",
+      err?.response?.data || err.message || err
+    );
+    throw err;
+  }
 }
 
 module.exports = { sendEmail };

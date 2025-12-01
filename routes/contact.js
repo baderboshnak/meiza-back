@@ -21,7 +21,7 @@ router.post("/", async (req, res) => {
       to: "luxurytech30@gmail.com",                   // your email
       subject: `New message from ${name}`,
       html: `
-        <h2>New contact form submission</h2>
+        <h2>New contact message</h2>
         <p><strong>Name:</strong> ${name}</p>
         <p><strong>Email:</strong> ${email}</p>
         <p><strong>Message:</strong></p>
