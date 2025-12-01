@@ -228,7 +228,7 @@ ${message}
 
 async function sendEmail(to, subject, text, html) {
   const from =
-    process.env.EMAIL_FROM || "Meiza Heritage <onboarding@resend.dev>";
+    process.env.EMAIL_FROM || "Meiza Heritage <no-reply@meiza.online>";
 
   const payload = {
     from,
