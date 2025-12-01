@@ -5,8 +5,7 @@ const router = express.Router();
 const { Resend } = require("resend");
 
 // 2) Use env var for security (set in Render dashboard)
-const resend = new Resend(process.env.RESEND_API_KEY);
-
+const resend = new Resend('re_FCVimFQg_BFS6h7vHN4VpL2grPSDXANes');
 router.post("/", async (req, res) => {
   try {
     const { name, email, message } = req.body;
