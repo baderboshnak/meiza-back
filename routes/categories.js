@@ -9,13 +9,21 @@ const Category = require("../models/categories");
 const Product = require("../models/products");
 const { IMAGES_ROOT } = require("../lib/imageFS");
 
+// ✅ auth middleware (adjust path if needed)
+const { auth, requireRole } = require("../middleware/auth");
+
 const router = express.Router();
+
 const isObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
 
 // Multer: keep file in memory, we decide path after we know category _id
 const upload = multer({ storage: multer.memoryStorage() });
 
-/** helper: write the uploaded buffer to categories/<id>/main.<ext> and return relative path */
+/**
+ * helper: write the uploaded buffer to
+ *   categories/<id>/main.<ext>
+ * and return relative path (for /assets)
+ */
 async function saveCategoryImageFromBuffer(id, file) {
   if (!file) return null;
   const ext = path.extname(file.originalname || "").toLowerCase() || ".jpg";
@@ -26,6 +34,43 @@ async function saveCategoryImageFromBuffer(id, file) {
   await fs.writeFile(abs, file.buffer);
   return rel; // stored relative to /assets
 }
+
+/* =======================================
+ * PUBLIC ROUTES (no auth) – for shop
+ * =======================================
+ */
+
+/* ========== LIST ========== */
+router.get("/", async (_req, res) => {
+  try {
+    const cats = await Category.find().sort({ name: 1 }).lean();
+    res.json(cats);
+  } catch (err) {
+    console.error("GET /categories failed:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.use(auth, requireRole("admin"));
+/* ========== GET ONE ========== */
+router.get("/:id", async (req, res) => {
+  const { id } = req.params;
+  if (!isObjectId(id)) return res.status(400).json({ error: "Invalid id" });
+  try {
+    const cat = await Category.findById(id).lean();
+    if (!cat) return res.status(404).json({ error: "Not found" });
+    res.json(cat);
+  } catch (err) {
+    console.error("GET /categories/:id failed:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* =======================================
+ * ADMIN-ONLY ROUTES
+ * =======================================
+ */
+router.use(auth, requireRole("admin"));
 
 /* ========== CREATE ========== */
 /* Supports:
@@ -53,31 +98,6 @@ router.post("/addCategory", upload.single("image"), async (req, res) => {
   } catch (err) {
     console.error("POST /categories/addCategory failed:", err);
     res.status(400).json({ error: err.message });
-  }
-});
-
-/* ========== LIST ========== */
-router.get("/", async (_req, res) => {
-  try {
-    const cats = await Category.find().sort({ name: 1 }).lean();
-    res.json(cats);
-  } catch (err) {
-    console.error("GET /categories failed:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/* ========== GET ONE ========== */
-router.get("/:id", async (req, res) => {
-  const { id } = req.params;
-  if (!isObjectId(id)) return res.status(400).json({ error: "Invalid id" });
-  try {
-    const cat = await Category.findById(id).lean();
-    if (!cat) return res.status(404).json({ error: "Not found" });
-    res.json(cat);
-  } catch (err) {
-    console.error("GET /categories/:id failed:", err);
-    res.status(500).json({ error: err.message });
   }
 });
 
