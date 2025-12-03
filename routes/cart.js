@@ -264,6 +264,7 @@ router.get("/", auth, async (req, res, next) => {
  * ============================
  */
 router.post("/items", auth, async (req, res, next) => {
+  const t0 = Date.now();
   try {
     const {
       productId,
@@ -284,11 +285,16 @@ router.post("/items", auth, async (req, res, next) => {
 
     const userId = req.user._id;
 
-    // 1) product + cart in parallel
+    // 1) product + cart in parallel (with select!)
     const [product, cartFound] = await Promise.all([
-      Product.findById(productId).lean(),
+      Product.findById(productId)
+        .select(
+          "name img options._id options.name options.img options.price options.vipPrice options.quantity options.sale"
+        )
+        .lean(),
       Cart.findOne({ user: userId }),
     ]);
+    const t1 = Date.now();
 
     if (!product) return res.status(404).json({ error: "Product not found" });
 
@@ -300,7 +306,6 @@ router.post("/items", auth, async (req, res, next) => {
     );
     if (!option) return res.status(404).json({ error: "Option not found" });
 
-    // price selection: VIP > SALE > BASE
     const isVip = (req.user?.roles || []).includes("vip");
     const basePrice = Number(option.price);
     const vipPrice = Number(option.vipPrice);
@@ -322,14 +327,13 @@ router.post("/items", auth, async (req, res, next) => {
     if (!Number.isFinite(unitPrice) || unitPrice < 0)
       return res.status(400).json({ error: "Invalid price on option", option });
 
-    // stock check
     const stock = Number(option.quantity) || 0;
     if (stock < qty)
       return res
         .status(400)
         .json({ error: "Not enough stock", stock, requested: qty });
 
-    // 2) merge item in memory
+    // 2) merge in memory
     const existing = cart.items.find(
       (it) =>
         String(it.product) === String(productId) &&
@@ -359,15 +363,26 @@ router.post("/items", auth, async (req, res, next) => {
       });
     }
 
-    // 3) single save
+    const t2 = Date.now();
+
     await cart.save();
+    const t3 = Date.now();
+
     const subtotal = calcSubtotal(cart);
+
+    console.log("[/cart/items DETAIL]", {
+      total: t3 - t0,
+      queryProductAndCart: t1 - t0,
+      inMemoryMerge: t2 - t1,
+      saveCart: t3 - t2,
+    });
 
     return res.status(201).json({ cart, subtotal });
   } catch (e) {
     next(e);
   }
 });
+
 
 /* ============================
  * UPDATE qty
