@@ -82,6 +82,14 @@ app.use(
     },
   })
 );
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    const ms = Date.now() - start;
+    console.log(`[SERVER] ${req.method} ${req.originalUrl} = ${ms}ms`);
+  });
+  next();
+});
 
 // public routes
 app.use("/products", productsRoute);
