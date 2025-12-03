@@ -26,6 +26,7 @@ const { sendWhatsApp } = require("./utils/twilioWhatsapp");
 
 // auth middleware
 const { auth } = require("./middleware/auth");
+const { optionalAuth } = require("./middleware/optionalAuth");
 
 // image storage root
 const { IMAGES_ROOT } = require("./lib/imageFS");
@@ -102,8 +103,8 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 
 // protected routes ONLY
 app.use("/users", auth, usersRouter);
-app.use("/cart", auth, cartRouter);
-app.use("/orders", auth, ordersRouter);
+app.use("/cart", cartRouter);
+app.use("/orders", ordersRouter);
 
 app.get("/webhook", (req, res) => {
   const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN;

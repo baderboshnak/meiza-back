@@ -36,7 +36,6 @@
 
 // module.exports = mongoose.model("carts", CartSchema);
 
-
 const mongoose = require("mongoose");
 
 const CartItemSchema = new mongoose.Schema(
@@ -48,7 +47,7 @@ const CartItemSchema = new mongoose.Schema(
     },
     optionId: { type: mongoose.Schema.Types.ObjectId, required: true },
 
-    // snapshot fields (fast reads, no populate needed)
+    // snapshot fields
     name: { type: String, required: true },
     optionName: { type: String, required: true },
     img: { type: String },
@@ -61,39 +60,29 @@ const CartItemSchema = new mongoose.Schema(
 
 const CartSchema = new mongoose.Schema(
   {
+    // logged-in user cart
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "users",
-      unique: true,
-      required: true,
+      required: false,
     },
+
+    // guest cart identifier (from x-guest-id)
+    guestId: { type: String, required: false },
 
     items: { type: [CartItemSchema], default: [] },
   },
   { timestamps: true }
 );
 
-/* ======================================================
- * 🔥 MAIN SPEED BOOSTERS — ADD THESE INDEXES
- * ====================================================== */
-
-// Fast lookup of cart by user (MOST IMPORTANT)
+// indexes
 CartSchema.index({ user: 1 });
+CartSchema.index({ guestId: 1 });
 
-// Useful when updating items or deleting by itemId
-CartSchema.index({ "items.product": 1 });
-CartSchema.index({ "items.optionId": 1 });
-
-/* ======================================================
- * Methods
- * ====================================================== */
-
-// For Mongoose documents
 CartSchema.methods.subtotal = function () {
   return this.items.reduce((s, it) => s + it.price * it.quantity, 0);
 };
 
-// For plain objects (.lean() results)
 CartSchema.statics.leanSubtotal = function (cart) {
   if (!cart || !Array.isArray(cart.items)) return 0;
   return cart.items.reduce(

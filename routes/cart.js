@@ -209,31 +209,24 @@
 
 
 // routes/cart.js
+// routes/cart.js
 const express = require("express");
 const mongoose = require("mongoose");
 const Cart = require("../models/cart");
 const Product = require("../models/products");
-const { auth } = require("../middleware/auth");
+const { optionalAuth } = require("../middleware/optionalAuth");
 
 const router = express.Router();
 const isId = (id) => mongoose.Types.ObjectId.isValid(id);
 
 /* ---------- Helpers ---------- */
 
-// subtotal for plain objects or Mongoose docs
 function calcSubtotal(cart) {
   if (!cart || !Array.isArray(cart.items)) return 0;
   return cart.items.reduce(
     (sum, it) => sum + Number(it.price || 0) * Number(it.quantity || 0),
     0
   );
-}
-
-// used in a few places
-async function getOrCreateCart(userId) {
-  let cart = await Cart.findOne({ user: userId });
-  if (!cart) cart = await Cart.create({ user: userId, items: [] });
-  return cart;
 }
 
 function isSaleActive(opt) {
@@ -244,35 +237,65 @@ function isSaleActive(opt) {
   return true;
 }
 
+function getGuestId(req) {
+  return req.headers["x-guest-id"] || null;
+}
+
+// choose cart by user or guest
+async function getOrCreateCart(user, guestId) {
+  if (user) {
+    let cart = await Cart.findOne({ user: user._id });
+    if (!cart) cart = await Cart.create({ user: user._id, items: [] });
+    return cart;
+  }
+
+  if (!guestId) throw new Error("Missing guest id");
+  let cart = await Cart.findOne({ guestId });
+  if (!cart) cart = await Cart.create({ guestId, items: [] });
+  return cart;
+}
+
 /* ============================
- * GET my cart (optimized)
+ * GET cart (user or guest)
  * ============================
  */
-router.get("/", auth, async (req, res, next) => {
+router.get("/", optionalAuth, async (req, res, next) => {
   try {
-    const cartDoc = await Cart.findOne({ user: req.user._id }).lean(); // fast read
-    const cart = cartDoc || { user: req.user._id, items: [] };
-    const subtotal = calcSubtotal(cart);
-    return res.json({ cart, subtotal });
+    const user = req.user || null;
+    const guestId = getGuestId(req);
+
+    let cartDoc = null;
+    if (user) {
+      cartDoc = await Cart.findOne({ user: user._id }).lean();
+    } else if (guestId) {
+      cartDoc = await Cart.findOne({ guestId }).lean();
+    }
+
+    const safeCart = cartDoc || { items: [] };
+    const subtotal = calcSubtotal(safeCart);
+    return res.json({ cart: safeCart, subtotal });
   } catch (e) {
     next(e);
   }
 });
 
 /* ============================
- * ADD item to cart (optimized)
+ * ADD item to cart
  * ============================
  */
-router.post("/items", auth, async (req, res, next) => {
+router.post("/items", optionalAuth, async (req, res, next) => {
   const t0 = Date.now();
   try {
+    const user = req.user || null;
+    const guestId = getGuestId(req) || null;
+
     const {
       productId,
       optionId: optionIdRaw,
       optionn,
       quantity = 1,
     } = req.body;
-    console.log(req.body)
+
     const optionId = optionn?._id ?? optionIdRaw;
     const qty = Number(quantity);
 
@@ -283,30 +306,38 @@ router.post("/items", auth, async (req, res, next) => {
     if (!Number.isFinite(qty) || qty <= 0)
       return res.status(400).json({ error: "Quantity must be >= 1", qty });
 
-    const userId = req.user._id;
-
-    // 1) product + cart in parallel (with select!)
     const [product, cartFound] = await Promise.all([
       Product.findById(productId)
         .select(
           "name img options._id options.name options.img options.price options.vipPrice options.quantity options.sale"
         )
         .lean(),
-      Cart.findOne({ user: userId }),
+      user
+        ? Cart.findOne({ user: user._id })
+        : guestId
+        ? Cart.findOne({ guestId })
+        : null,
     ]);
     const t1 = Date.now();
 
     if (!product) return res.status(404).json({ error: "Product not found" });
 
     let cart = cartFound;
-    if (!cart) cart = new Cart({ user: userId, items: [] });
+    if (!cart) {
+      if (!user && !guestId)
+        return res.status(400).json({ error: "Missing guest id" });
+
+      cart = user
+        ? new Cart({ user: user._id, items: [] })
+        : new Cart({ guestId, items: [] });
+    }
 
     const option = (product.options || []).find(
       (o) => String(o._id) === String(optionId)
     );
     if (!option) return res.status(404).json({ error: "Option not found" });
 
-    const isVip = (req.user?.roles || []).includes("vip");
+    const isVip = (user?.roles || []).includes("vip");
     const basePrice = Number(option.price);
     const vipPrice = Number(option.vipPrice);
     const salePrice = [option.salePrice, option.sale?.price, option.sale?.value]
@@ -314,14 +345,10 @@ router.post("/items", auth, async (req, res, next) => {
       .find((v) => Number.isFinite(v));
 
     let unitPrice = basePrice;
-    let priceSource = "base";
-
     if (isVip && Number.isFinite(vipPrice)) {
       unitPrice = vipPrice;
-      priceSource = "vip";
     } else if (isSaleActive(option) && Number.isFinite(salePrice)) {
       unitPrice = salePrice;
-      priceSource = "sale";
     }
 
     if (!Number.isFinite(unitPrice) || unitPrice < 0)
@@ -333,7 +360,6 @@ router.post("/items", auth, async (req, res, next) => {
         .status(400)
         .json({ error: "Not enough stock", stock, requested: qty });
 
-    // 2) merge in memory
     const existing = cart.items.find(
       (it) =>
         String(it.product) === String(productId) &&
@@ -348,7 +374,6 @@ router.post("/items", auth, async (req, res, next) => {
           .json({ error: "Not enough stock", stock, requested: newQty });
 
       existing.price = unitPrice;
-      existing.priceSource = priceSource;
       existing.quantity = newQty;
     } else {
       cart.items.push({
@@ -359,12 +384,10 @@ router.post("/items", auth, async (req, res, next) => {
         img: option.img || product.img || "",
         quantity: qty,
         price: unitPrice,
-        priceSource,
       });
     }
 
     const t2 = Date.now();
-
     await cart.save();
     const t3 = Date.now();
 
@@ -383,12 +406,11 @@ router.post("/items", auth, async (req, res, next) => {
   }
 });
 
-
 /* ============================
  * UPDATE qty
  * ============================
  */
-router.patch("/items/:itemId", auth, async (req, res, next) => {
+router.patch("/items/:itemId", optionalAuth, async (req, res, next) => {
   try {
     const { itemId } = req.params;
     const { quantity } = req.body;
@@ -398,11 +420,13 @@ router.patch("/items/:itemId", auth, async (req, res, next) => {
     if (!Number.isFinite(qty) || qty <= 0)
       return res.status(400).json({ error: "Quantity must be >= 1" });
 
-    const cart = await getOrCreateCart(req.user._id);
+    const user = req.user || null;
+    const guestId = getGuestId(req) || null;
+
+    const cart = await getOrCreateCart(user, guestId);
     const item = cart.items.id(itemId);
     if (!item) return res.status(404).json({ error: "Item not found" });
 
-    // stock check
     const product = await Product.findById(item.product).lean();
     const option = (product?.options || []).find(
       (o) => o._id?.toString() === item.optionId.toString()
@@ -424,17 +448,20 @@ router.patch("/items/:itemId", auth, async (req, res, next) => {
  * DELETE item
  * ============================
  */
-router.delete("/items/:itemId", auth, async (req, res, next) => {
+router.delete("/items/:itemId", optionalAuth, async (req, res, next) => {
   try {
     const { itemId } = req.params;
     if (!isId(itemId)) return res.status(400).json({ error: "Invalid itemId" });
 
-    const cart = await Cart.findOne({ user: req.user._id });
+    const user = req.user || null;
+    const guestId = getGuestId(req) || null;
+
+    let cart = null;
+    if (user) cart = await Cart.findOne({ user: user._id });
+    else if (guestId) cart = await Cart.findOne({ guestId });
+
     if (!cart) {
-      return res.json({
-        cart: { user: req.user._id, items: [] },
-        subtotal: 0,
-      });
+      return res.json({ cart: { items: [] }, subtotal: 0 });
     }
 
     await Cart.updateOne(
@@ -443,7 +470,7 @@ router.delete("/items/:itemId", auth, async (req, res, next) => {
     );
 
     const fresh = await Cart.findById(cart._id).lean();
-    const safeCart = fresh || { user: req.user._id, items: [] };
+    const safeCart = fresh || { items: [] };
     const subtotal = calcSubtotal(safeCart);
 
     return res.json({ cart: safeCart, subtotal });
@@ -456,11 +483,15 @@ router.delete("/items/:itemId", auth, async (req, res, next) => {
  * CLEAR cart
  * ============================
  */
-router.delete("/", auth, async (req, res, next) => {
+router.delete("/", optionalAuth, async (req, res, next) => {
   try {
-    const cart = await getOrCreateCart(req.user._id);
+    const user = req.user || null;
+    const guestId = getGuestId(req) || null;
+
+    const cart = await getOrCreateCart(user, guestId);
     cart.items = [];
     await cart.save();
+
     return res.json({ cart, subtotal: 0 });
   } catch (e) {
     next(e);

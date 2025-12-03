@@ -19,35 +19,45 @@ const OrderItemSchema = new mongoose.Schema(
 
 const OrderSchema = new mongoose.Schema(
   {
+    // 👇 user is now OPTIONAL (for guest orders)
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "users",
-      required: true,
       index: true,
+      // no "required: true" here
     },
+
     items: { type: [OrderItemSchema], required: true },
+
     totals: {
       subtotal: { type: Number, required: true, min: 0 },
       shipping: { type: Number, required: true, min: 0, default: 0 },
       grandTotal: { type: Number, required: true, min: 0 },
     },
+
     status: {
       type: String,
       enum: ["pending", "paid", "shipped", "completed", "canceled"],
       default: "pending",
       index: true,
     },
+
     payment: {
-      method: { type: String, enum: ["cod", "card", "paypal"], default: "cod" },
+      method: {
+        type: String,
+        enum: ["cod", "card", "paypal"],
+        default: "cod",
+      },
       transactionId: { type: String },
     },
+
     shipping: {
       fullName: String,
       phone: String,
       addressLine1: String,
       addressLine2: String,
       city: String,
-      email:String,
+      email: String,
       postalCode: String,
       country: String,
     },
