@@ -1,7 +1,10 @@
+// routes/products.js
 const express = require("express");
 const mongoose = require("mongoose");
 const Product = require("../models/products");
 const { cloudinary } = require("../middleware/cloudinary");
+// ✅ auth middleware (adjust path if different in your project)
+const { auth, requireRole } = require("../middleware/auth");
 
 const router = express.Router();
 const isObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
@@ -27,7 +30,8 @@ function publicIdFromUrl(url) {
       s.includes(",") ||
       /^(a_|ar_|b_|c_|dpr_|e_|fl_|g_|h_|q_|r_|t_|u_|w_|x_|y_|z_)/.test(s);
     let startIdx = 0;
-    while (startIdx < afterVersion.length && transLike(afterVersion[startIdx])) startIdx++;
+    while (startIdx < afterVersion.length && transLike(afterVersion[startIdx]))
+      startIdx++;
     const path = afterVersion.slice(startIdx).join("/");
     if (!path) return null;
     return path.replace(/\.[^/.]+$/, "");
@@ -78,7 +82,7 @@ function normalizeOptions(arr) {
       ...(o._id ? { _id: o._id } : {}),
       name: String(o.name || "").trim(),
       price: Number(o.price ?? 0),
-      vipPrice: numOrUndef(o.vipPrice), // <-- keep vipPrice on update
+      vipPrice: numOrUndef(o.vipPrice),
       quantity: Number(o.quantity ?? 0),
       img: o.img || "",
       imgId: o.imgId || "",
@@ -94,26 +98,10 @@ function normalizeOptions(arr) {
   });
 }
 
-/** Create product */
-router.post("/addNewProduct", async (req, res) => {
-  try {
-    if (typeof req.body.options === "string") {
-      req.body.options = JSON.parse(req.body.options);
-    }
-    const doc = await Product.create({
-      name: String(req.body.name || "").trim(),
-      desc: req.body.desc || "",
-      img: req.body.img || "",
-      imgId: req.body.imgId || "",
-      ...(req.body.category ? { category: req.body.category } : {}),
-      options: normalizeOptions(req.body.options),
-    });
-    const populated = await doc.populate("category");
-    res.status(201).json(populated);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
+/* =======================================
+ * PUBLIC ROUTES (no auth) – shop/front
+ * =======================================
+ */
 
 /** List products */
 router.get("/", async (_req, res) => {
@@ -135,6 +123,33 @@ router.get("/:id", async (req, res) => {
     res.json(row);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+/* =======================================
+ * ADMIN-ONLY ROUTES
+ * =======================================
+ */
+router.use(auth, requireRole("admin"));
+
+/** Create product */
+router.post("/addNewProduct", async (req, res) => {
+  try {
+    if (typeof req.body.options === "string") {
+      req.body.options = JSON.parse(req.body.options);
+    }
+    const doc = await Product.create({
+      name: String(req.body.name || "").trim(),
+      desc: req.body.desc || "",
+      img: req.body.img || "",
+      imgId: req.body.imgId || "",
+      ...(req.body.category ? { category: req.body.category } : {}),
+      options: normalizeOptions(req.body.options),
+    });
+    const populated = await doc.populate("category");
+    res.status(201).json(populated);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 
@@ -160,8 +175,14 @@ router.put("/:id", async (req, res) => {
       await Promise.all(
         toDelete.map((pid) =>
           cloudinary.uploader
-            .destroy(pid, { invalidate: true, resource_type: "image", type: "upload" })
-            .catch((e) => console.error("Cloudinary destroy failed:", pid, e?.message))
+            .destroy(pid, {
+              invalidate: true,
+              resource_type: "image",
+              type: "upload",
+            })
+            .catch((e) =>
+              console.error("Cloudinary destroy failed:", pid, e?.message)
+            )
         )
       );
     }
@@ -213,7 +234,11 @@ router.delete("/:id", async (req, res) => {
     await Promise.all(
       ids.map((pid) =>
         cloudinary.uploader
-          .destroy(pid, { invalidate: true, resource_type: "image", type: "upload" })
+          .destroy(pid, {
+            invalidate: true,
+            resource_type: "image",
+            type: "upload",
+          })
           .catch(() => null)
       )
     );
@@ -235,13 +260,19 @@ router.delete("/:id/option-image/:optId", async (req, res) => {
     const p = await Product.findById(id);
     if (!p) return res.status(404).json({ error: "Not found" });
 
-    const opt = (p.options || []).find((o) => String(o._id) === String(optId));
+    const opt = (p.options || []).find(
+      (o) => String(o._id) === String(optId)
+    );
     if (!opt) return res.json({ deleted: false });
 
     const pid = opt.imgId || publicIdFromUrl(opt.img || "");
     if (pid) {
       await cloudinary.uploader
-        .destroy(pid, { invalidate: true, resource_type: "image", type: "upload" })
+        .destroy(pid, {
+          invalidate: true,
+          resource_type: "image",
+          type: "upload",
+        })
         .catch(() => null);
     }
 

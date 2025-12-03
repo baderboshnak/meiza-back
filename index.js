@@ -82,6 +82,7 @@ app.use(
     },
   })
 );
+
 app.use((req, res, next) => {
   const start = Date.now();
   res.on("finish", () => {
@@ -90,7 +91,6 @@ app.use((req, res, next) => {
   });
   next();
 });
-
 // public routes
 app.use("/products", productsRoute);
 app.use("/categories", categoriesRoute);
