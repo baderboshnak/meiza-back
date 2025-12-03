@@ -272,7 +272,7 @@ router.post("/items", auth, async (req, res, next) => {
       optionn,
       quantity = 1,
     } = req.body;
-
+    console.log(req.body)
     const optionId = optionn?._id ?? optionIdRaw;
     const qty = Number(quantity);
 
