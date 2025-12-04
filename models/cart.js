@@ -76,8 +76,12 @@ const CartSchema = new mongoose.Schema(
 );
 
 // indexes
-CartSchema.index({ user: 1 });
-CartSchema.index({ guestId: 1 });
+// exactly one cart per logged-in user (ignores docs where user is null)
+CartSchema.index({ user: 1 }, { unique: true, sparse: true });
+
+// exactly one cart per guestId
+CartSchema.index({ guestId: 1 }, { unique: true, sparse: true });
+
 
 CartSchema.methods.subtotal = function () {
   return this.items.reduce((s, it) => s + it.price * it.quantity, 0);

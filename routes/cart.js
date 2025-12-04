@@ -288,7 +288,11 @@ router.post("/items", optionalAuth, async (req, res, next) => {
   try {
     const user = req.user || null;
     const guestId = getGuestId(req) || null;
-
+    console.log("DEBUG /cart/items", {
+    authHeader: req.headers.authorization,
+    userId: req.user ? req.user._id : null,
+    guestId: req.headers["x-guest-id"],
+  });
     const {
       productId,
       optionId: optionIdRaw,

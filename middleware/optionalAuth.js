@@ -14,13 +14,22 @@ async function optionalAuth(req, _res, next) {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id).lean();
 
+    // your token uses "sub" as the user id
+    const userId = decoded.id || decoded.sub || decoded._id;
+
+    if (!userId) {
+      req.user = null;
+      return next();
+    }
+
+    const user = await User.findById(userId).lean();
     req.user = user || null;
-    next();
-  } catch {
+    return next();
+  } catch (err) {
+    console.error("optionalAuth error:", err.message);
     req.user = null;
-    next();
+    return next();
   }
 }
 
