@@ -1,6 +1,9 @@
 // utils/email.js
 const { Resend } = require("resend");
 
+const fs = require("fs");
+const path = require("path");
+
 // Better: use env var in Render
 const resend = new Resend(
   process.env.RESEND_API_KEY || "re_FCVimFQg_BFS6h7vHN4VpL2grPSDXANes"
@@ -41,7 +44,10 @@ function baseTemplate({ title, intro, content, footer, rtl = false }) {
             <tr>
               <td style="padding:16px 24px 20px;${textAlignStyle}">
                 <p style="margin:0 0 8px;font-size:12px;color:#555555;line-height:1.5;text-align:${align};">
-                  ${footer || "For any questions, reply to this email and we will be happy to help."}
+                  ${
+                    footer ||
+                    "For any questions, reply to this email and we will be happy to help."
+                  }
                 </p>
                 <p style="margin:0;font-size:11px;color:#9b9b9b;text-align:${align};">
                   © ${new Date().getFullYear()} Meiza Heritage. All rights reserved.
@@ -64,7 +70,9 @@ function buildOrderAdminEmail(order) {
       (it) => `
       <tr>
         <td style="padding:8px 0;border-bottom:1px solid #eee;">
-          <div style="font-size:14px;font-weight:600;color:#111;">${it.name}</div>
+          <div style="font-size:14px;font-weight:600;color:#111;">${
+            it.name
+          }</div>
           ${
             it.optionName
               ? `<div style="font-size:12px;color:#777;">${it.optionName}</div>`
@@ -212,7 +220,6 @@ function buildOrderCustomerEmail(order) {
   };
 }
 
-
 // ---------- CONTACT TEMPLATE (ADMIN) ----------
 
 function buildContactAdminEmail({ name, email, message }) {
@@ -259,7 +266,7 @@ ${message}
 
 // ---------- GENERIC SENDER ----------
 
-async function sendEmail(to, subject, text, html) {
+async function sendEmail(to, subject, text, html, attachmentPath = null) {
   const from =
     process.env.EMAIL_FROM || "Meiza Heritage <no-reply@meiza.online>";
 
@@ -273,6 +280,16 @@ async function sendEmail(to, subject, text, html) {
       `<pre style="font-family: sans-serif; white-space: pre-wrap;">${text}</pre>`,
   };
 
+  if (attachmentPath) {
+    const attachment = fs.readFileSync(attachmentPath); // Read PDF file
+    payload.attachments = [
+      {
+        filename: path.basename(attachmentPath), // Set the PDF filename
+        content: attachment, // Set the content of the attachment
+        type: "application/pdf", // MIME type for PDF
+      },
+    ];
+  }
   try {
     const result = await resend.emails.send(payload);
     if (result.error) {
@@ -286,6 +303,10 @@ async function sendEmail(to, subject, text, html) {
       "[MAIL] Resend error:",
       err?.response?.data || err.message || err
     );
+    // Add more logging to debug the error
+    if (err?.response) {
+      console.error("[MAIL] Resend API response:", err.response);
+    }
     throw err;
   }
 }
