@@ -271,18 +271,26 @@ const router = express.Router();
 // Function to create PDF
 const createPDF = (order) => {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument();
-    const filePath = path.join(__dirname, `../uploads/order_${order._id}.pdf`);
+    // Define the folder and file path
+    const uploadDir = path.join(__dirname, "../uploads");
 
+    // Check if the uploads directory exists, and if not, create it
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    const filePath = path.join(uploadDir, `order_${order._id}.pdf`);
+
+    // Create a new PDF document
+    const doc = new PDFDocument();
+    
     // Pipe the PDF to a writable stream
     doc.pipe(fs.createWriteStream(filePath));
 
-    // Add some content to the PDF
+    // Add content to the PDF
     doc.fontSize(16).text("Order Details", { underline: true });
     doc.text(`Order ID: ${order._id}`);
-    doc.text(
-      `Shipping Address: ${order.shipping.addressLine1}, ${order.shipping.city}`
-    );
+    doc.text(`Shipping Address: ${order.shipping.addressLine1}, ${order.shipping.city}`);
 
     // Add order items
     doc.text("\nItems:\n");
@@ -298,8 +306,9 @@ const createPDF = (order) => {
 
     // Finalize the PDF and return the file path
     doc.end();
-    doc.on("finish", () => resolve(filePath));
-    doc.on("error", reject);
+
+    doc.on("finish", () => resolve(filePath)); // Resolve with file path once PDF is finished
+    doc.on("error", reject); // Reject if there's an error
   });
 };
 
