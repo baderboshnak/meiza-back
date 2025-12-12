@@ -249,10 +249,11 @@
 
 // module.exports = router;
 
-
-
 const express = require("express");
 const mongoose = require("mongoose");
+const PDFDocument = require("pdfkit");
+const fs = require("fs");
+const path = require("path");
 const Cart = require("../models/cart");
 const Order = require("../models/order");
 const Product = require("../models/products");
@@ -267,10 +268,47 @@ const {
 
 const router = express.Router();
 
+// Function to create PDF
+const createPDF = (order) => {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument();
+    const filePath = path.join(__dirname, `../uploads/order_${order._id}.pdf`);
+
+    // Pipe the PDF to a writable stream
+    doc.pipe(fs.createWriteStream(filePath));
+
+    // Add some content to the PDF
+    doc.fontSize(16).text("Order Details", { underline: true });
+    doc.text(`Order ID: ${order._id}`);
+    doc.text(
+      `Shipping Address: ${order.shipping.addressLine1}, ${order.shipping.city}`
+    );
+
+    // Add order items
+    doc.text("\nItems:\n");
+    order.items.forEach((item) => {
+      doc.text(`${item.quantity} x ${item.name} - ${item.price}`);
+    });
+
+    // Add totals
+    doc.text("\nTotals:");
+    doc.text(`Subtotal: ${order.totals.subtotal}`);
+    doc.text(`Shipping: ${order.totals.shipping}`);
+    doc.text(`Grand Total: ${order.totals.grandTotal}`);
+
+    // Finalize the PDF and return the file path
+    doc.end();
+    doc.on("finish", () => resolve(filePath));
+    doc.on("error", reject);
+  });
+};
+
 /**
  * CHECKOUT
  * - Logged-in user: uses cart with { user: req.user._id }
  * - Guest: uses cart with { guestId: req.headers['x-guest-id'] }
+ *
+ *
  */
 router.post("/checkout", optionalAuth, async (req, res) => {
   const { shipping = {}, shippingPrice = 0, paymentMethod = "cod" } = req.body;
@@ -306,9 +344,7 @@ router.post("/checkout", optionalAuth, async (req, res) => {
       const opt = prod.options.id(it.optionId);
       if (!opt) throw new Error(`Option not found: ${it.optionId}`);
       if ((opt.quantity || 0) < it.quantity)
-        throw new Error(
-          `Insufficient stock for ${it.name} / ${it.optionName}`
-        );
+        throw new Error(`Insufficient stock for ${it.name} / ${it.optionName}`);
     }
 
     // 2) decrement stock
@@ -321,10 +357,7 @@ router.post("/checkout", optionalAuth, async (req, res) => {
       if (upd.modifiedCount !== 1) throw new Error("Stock update failed");
     }
 
-    const subtotal = cart.items.reduce(
-      (s, i) => s + i.price * i.quantity,
-      0
-    );
+    const subtotal = cart.items.reduce((s, i) => s + i.price * i.quantity, 0);
     const grandTotal = subtotal + (shippingPrice || 0);
 
     console.log("Calculated totals:", { subtotal, shippingPrice, grandTotal });
@@ -367,7 +400,9 @@ router.post("/checkout", optionalAuth, async (req, res) => {
     session.endSession();
     console.log("Transaction committed for order:", order._id);
 
-    // 6) send emails (unchanged)
+    // 6) Create PDF
+    const pdfFilePath = await createPDF(order);
+    // 7) send emails (unchanged)
     try {
       console.log("EMAIL_FROM env:", process.env.EMAIL_FROM);
       console.log("ADMIN_EMAIL env:", process.env.ADMIN_EMAIL);
@@ -382,7 +417,8 @@ router.post("/checkout", optionalAuth, async (req, res) => {
           process.env.ADMIN_EMAIL,
           adminMail.subject,
           adminMail.text,
-          adminMail.html
+          adminMail.html,
+          pdfFilePath
         );
         console.log("[MAIL] Admin email sent");
       } else {
@@ -401,7 +437,8 @@ router.post("/checkout", optionalAuth, async (req, res) => {
           order.shipping.email,
           custMail.subject,
           custMail.text,
-          custMail.html
+          custMail.html,
+          pdfFilePath
         );
         console.log("[MAIL] Customer email sent");
       } else {
@@ -443,9 +480,7 @@ router.get("/:id", auth, async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(id))
     return res.status(400).json({ error: "Invalid id" });
 
-  const ord = await Order.findById(id)
-    .populate("user", "username name")
-    .lean();
+  const ord = await Order.findById(id).populate("user", "username name").lean();
   if (!ord) return res.status(404).json({ error: "Not found" });
 
   const ownerId = ord.user && (ord.user._id || ord.user);
