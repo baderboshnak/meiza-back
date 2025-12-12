@@ -268,6 +268,7 @@ const {
 
 const router = express.Router();
 
+
 // Function to create PDF
 const createPDF = (order) => {
   return new Promise((resolve, reject) => {
@@ -310,14 +311,12 @@ const createPDF = (order) => {
     doc.on("finish", () => resolve(filePath)); // Resolve with file path once PDF is finished
     doc.on("error", reject); // Reject if there's an error
   });
-};
+}
 
 /**
  * CHECKOUT
  * - Logged-in user: uses cart with { user: req.user._id }
  * - Guest: uses cart with { guestId: req.headers['x-guest-id'] }
- *
- *
  */
 router.post("/checkout", optionalAuth, async (req, res) => {
   const { shipping = {}, shippingPrice = 0, paymentMethod = "cod" } = req.body;
@@ -336,7 +335,7 @@ router.post("/checkout", optionalAuth, async (req, res) => {
   session.startTransaction();
 
   try {
-    // decide which cart to use
+    // Decide which cart to use
     let cartQuery = null;
     if (userId) cartQuery = { user: userId };
     else if (guestId) cartQuery = { guestId };
@@ -346,7 +345,7 @@ router.post("/checkout", optionalAuth, async (req, res) => {
     console.log("Cart found:", !!cart, "items:", cart?.items?.length);
     if (!cart || cart.items.length === 0) throw new Error("Cart is empty");
 
-    // 1) validate stock
+    // 1) Validate stock
     for (const it of cart.items) {
       const prod = await Product.findById(it.product).session(session);
       if (!prod) throw new Error(`Product not found: ${it.product}`);
@@ -356,7 +355,7 @@ router.post("/checkout", optionalAuth, async (req, res) => {
         throw new Error(`Insufficient stock for ${it.name} / ${it.optionName}`);
     }
 
-    // 2) decrement stock
+    // 2) Decrement stock
     for (const it of cart.items) {
       const upd = await Product.updateOne(
         { _id: it.product, "options._id": it.optionId },
@@ -371,7 +370,7 @@ router.post("/checkout", optionalAuth, async (req, res) => {
 
     console.log("Calculated totals:", { subtotal, shippingPrice, grandTotal });
 
-    // 3) create order
+    // 3) Create order
     const orderDoc = {
       items: cart.items.map((i) => ({
         product: i.product,
@@ -387,7 +386,6 @@ router.post("/checkout", optionalAuth, async (req, res) => {
       shipping, // { fullName, phone, city, addressLine1, addressLine2, email, ... }
     };
 
-    // only attach user if logged in (guest checkout has no user)
     if (userId) {
       orderDoc.user = userId;
     }
@@ -396,32 +394,24 @@ router.post("/checkout", optionalAuth, async (req, res) => {
     const order = created[0];
     console.log("Order created:", order._id);
 
-    // 4) clear cart
+    // 4) Clear cart
     cart.items = [];
     await cart.save({ session });
-    console.log(
-      "Cart cleared for",
-      userId ? `user: ${userId}` : `guest: ${guestId}`
-    );
+    console.log("Cart cleared for", userId ? `user: ${userId}` : `guest: ${guestId}`);
 
-    // 5) commit transaction
+    // 5) Commit transaction
     await session.commitTransaction();
     session.endSession();
     console.log("Transaction committed for order:", order._id);
 
     // 6) Create PDF
     const pdfFilePath = await createPDF(order);
-    // 7) send emails (unchanged)
-    try {
-      console.log("EMAIL_FROM env:", process.env.EMAIL_FROM);
-      console.log("ADMIN_EMAIL env:", process.env.ADMIN_EMAIL);
-      console.log("Order shipping email:", order.shipping?.email);
 
-      // -------- Admin email --------
+    // 7) Send emails (Debugging email sending)
+    try {
+      console.log("Sending admin email...");
       if (process.env.ADMIN_EMAIL) {
         const adminMail = buildOrderAdminEmail(order);
-
-        console.log("[MAIL] Sending admin order email...");
         await sendEmail(
           process.env.ADMIN_EMAIL,
           adminMail.subject,
@@ -434,14 +424,9 @@ router.post("/checkout", optionalAuth, async (req, res) => {
         console.warn("[MAIL] ADMIN_EMAIL is not set in env");
       }
 
-      // -------- Customer email --------
+      console.log("Sending customer email...");
       if (order.shipping.email) {
         const custMail = buildOrderCustomerEmail(order);
-
-        console.log(
-          "[MAIL] Sending customer order email to:",
-          order.shipping.email
-        );
         await sendEmail(
           order.shipping.email,
           custMail.subject,
@@ -451,15 +436,13 @@ router.post("/checkout", optionalAuth, async (req, res) => {
         );
         console.log("[MAIL] Customer email sent");
       } else {
-        console.warn(
-          "[MAIL] No shipping.email on order, skipping customer email"
-        );
+        console.warn("[MAIL] No shipping.email on order, skipping customer email");
       }
     } catch (mailErr) {
       console.error("[MAIL] Email send failed:", mailErr.message || mailErr);
     }
 
-    // 7) populate user for frontend (if any)
+    // 8) Populate user for frontend (if any)
     const populated = await Order.findById(order._id)
       .populate("user", "username name")
       .lean();
@@ -473,6 +456,7 @@ router.post("/checkout", optionalAuth, async (req, res) => {
     return res.status(400).json({ error: e.message });
   }
 });
+
 
 // My orders (populated user)
 router.get("/my", auth, async (req, res) => {

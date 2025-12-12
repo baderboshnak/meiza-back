@@ -280,6 +280,7 @@ async function sendEmail(to, subject, text, html, attachmentPath = null) {
       `<pre style="font-family: sans-serif; white-space: pre-wrap;">${text}</pre>`,
   };
 
+  // Attach PDF if provided
   if (attachmentPath) {
     const attachment = fs.readFileSync(attachmentPath); // Read PDF file
     payload.attachments = [
@@ -290,20 +291,19 @@ async function sendEmail(to, subject, text, html, attachmentPath = null) {
       },
     ];
   }
+
   try {
+    console.log("Sending email...");
     const result = await resend.emails.send(payload);
+    console.log("[MAIL] Resend response:", result); // Log the response
     if (result.error) {
       console.error("[MAIL] Resend API error:", result.error);
       throw new Error(result.error.message || "Resend email failed");
     }
-    console.log("[MAIL] Resend response:", result);
+    console.log("[MAIL] Email sent successfully:", result);
     return result;
   } catch (err) {
-    console.error(
-      "[MAIL] Resend error:",
-      err?.response?.data || err.message || err
-    );
-    // Add more logging to debug the error
+    console.error("[MAIL] Resend error:", err?.response?.data || err.message || err);
     if (err?.response) {
       console.error("[MAIL] Resend API response:", err.response);
     }
