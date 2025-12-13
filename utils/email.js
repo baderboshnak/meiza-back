@@ -295,12 +295,12 @@ async function sendEmail(to, subject, text, html, attachmentPath = null) {
   try {
     console.log("Sending email...");
     const result = await resend.emails.send(payload);
-    console.log("[MAIL] Resend response:", result); // Log the response
+    console.log("[MAIL] Resend response:"); // Log the response
     if (result.error) {
       console.error("[MAIL] Resend API error:", result.error);
       throw new Error(result.error.message || "Resend email failed");
     }
-    console.log("[MAIL] Email sent successfully:", result);
+    console.log("[MAIL] Email sent successfully:");
     return result;
   } catch (err) {
     console.error("[MAIL] Resend error:", err?.response?.data || err.message || err);

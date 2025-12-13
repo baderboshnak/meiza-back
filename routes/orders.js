@@ -272,99 +272,173 @@ const router = express.Router();
 
 
 // Function to create PDF
+// Function to create PDF
 const createPDF = (order) => {
   return new Promise((resolve, reject) => {
-    const uploadDir = path.join(__dirname, "../uploads");
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    const filePath = path.join(uploadDir, `order_${order._id}.pdf`);
-    const doc = new PDFDocument();
+    try {
+      const uploadDir = path.join(__dirname, "../uploads");
+      if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+      const filePath = path.join(uploadDir, `order_${order._id}.pdf`);
+      const stream = fs.createWriteStream(filePath);
+      
+      stream.on("finish", () => resolve(filePath));
+      stream.on("error", (err) => reject(err));
 
-    // prefer a Hebrew-capable font if present
-    const fonts = [
-      path.join(__dirname, "../assets/fonts/NotoSansHebrew-VariableFont_wdth,wght.ttf"),
-      path.join(__dirname, "../assets/fonts/NotoSansHebrew-Regular.ttf"),
-      path.join(__dirname, "../assets/fonts/DejaVuSans.ttf"),
-    ];
-    const fontPath = fonts.find((p) => fs.existsSync(p));
-    if (fontPath) {
-      console.log("[PDF] Using font:", fontPath);
-      doc.registerFont("Main", fontPath);
-      doc.font("Main");
-    } else {
-      console.warn("[PDF] No Hebrew font found in assets/fonts. Text may render incorrectly.");
-      doc.font("Helvetica");
-    }
+      const doc = new PDFDocument({ margin: 50, size: "A4" });
 
-    // helper to decode + normalize text
-    const clean = (v) => {
-      if (v === undefined || v === null) return "-";
+      // PREFER HEBREW FONT
+      const fontsDir = path.join(__dirname, "../assets/fonts");
+      let fontPath = null;
+      
       try {
-        // strings are already UTF-8 in DB, just decode HTML entities and normalize
-        let s = he.decode(String(v));
-        return s.normalize("NFC");
-      } catch (err) {
-        return String(v);
+        if (fs.existsSync(fontsDir)) {
+          const files = fs.readdirSync(fontsDir);
+          const hebrewFile = files.find((f) => /hebrew/i.test(f) && /\.ttf$/i.test(f));
+          if (hebrewFile) {
+            fontPath = path.join(fontsDir, hebrewFile);
+          } else {
+            for (const file of files) {
+              const fullPath = path.join(fontsDir, file);
+              const stat = fs.statSync(fullPath);
+              if (stat.isDirectory()) {
+                const subFiles = fs.readdirSync(fullPath);
+                const ttfFile = subFiles.find((f) => /\.ttf$/i.test(f));
+                if (ttfFile) {
+                  fontPath = path.join(fullPath, ttfFile);
+                  break;
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("[PDF] font scan error:", e.message);
       }
-    };
 
-    // create writable stream and listen to its events
-    const stream = fs.createWriteStream(filePath);
-    stream.on("finish", () => resolve(filePath));
-    stream.on("error", (err) => reject(err));
+      if (fontPath && fs.existsSync(fontPath)) {
+        doc.registerFont("MainFont", fontPath);
+        doc.font("MainFont");
+        console.log("[PDF] Using font:", fontPath);
+      } else {
+        doc.font("Helvetica");
+      }
 
-    doc.pipe(stream);
+      const clean = (v) => {
+        if (v === undefined || v === null) return "-";
+        try {
+          let s = he.decode(String(v));
+          return s.normalize("NFC");
+        } catch (err) {
+          return String(v);
+        }
+      };
 
-    doc.fontSize(18).text("Order Details", { underline: true });
-    doc.moveDown();
+      // Function to preserve spaces in bidirectional text
+      const preserveSpaces = (text) => {
+        // Add zero-width space after regular spaces to prevent collapse
+        return text.replace(/ /g, " \u200B");
+      };
 
-    doc.fontSize(12).text(`Order ID: ${clean(order._id)}`);
+      doc.pipe(stream);
+      doc.fillColor("black");
 
-    // Shipping / customer details (cleaned)
-    if (order.shipping) {
+      const leftX = doc.page.margins.left;
+      const maxWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+
+      // Title
+      doc.fontSize(18).text("Order Details", leftX, doc.y, { width: maxWidth, underline: true });
+      doc.moveDown(0.8);
+
+      // Order ID
+      doc.fontSize(11).text(`Order ID: ${clean(order._id)}`, leftX, doc.y, { width: maxWidth });
+      doc.moveDown(0.6);
+
+      // Customer info - preserve spaces in Hebrew/Arabic
+      if (order.shipping) {
+        doc.fontSize(11);
+        doc.text(`Name: ${preserveSpaces(clean(order.shipping.fullName))}`, leftX, doc.y, { width: maxWidth });
+        doc.moveDown(0.5);
+        doc.text(`Phone: ${clean(order.shipping.phone)}`, leftX, doc.y, { width: maxWidth });
+        doc.moveDown(0.5);
+        doc.text(`Email: ${clean(order.shipping.email)}`, leftX, doc.y, { width: maxWidth });
+        doc.moveDown(0.5);
+        doc.text(`City: ${preserveSpaces(clean(order.shipping.city))}`, leftX, doc.y, { width: maxWidth });
+        doc.moveDown(0.5);
+        doc.text(`Address: ${preserveSpaces(clean(order.shipping.addressLine1))}`, leftX, doc.y, { width: maxWidth });
+        doc.moveDown(0.5);
+        if (order.shipping.addressLine2) {
+          doc.text(`Notes: ${preserveSpaces(clean(order.shipping.addressLine2))}`, leftX, doc.y, { width: maxWidth });
+          doc.moveDown(0.5);
+        }
+      }
+
+      doc.moveDown(0.6);
+      doc.fontSize(13).text("Items:", leftX, doc.y, { width: maxWidth, underline: true });
+      doc.moveDown(0.4);
+
+      // Table header
+      const colItemW = Math.floor(maxWidth * 0.55);
+      const colQtyW = Math.floor(maxWidth * 0.12);
+      const colPriceW = Math.floor(maxWidth * 0.16);
+      const colTotalW = maxWidth - (colItemW + colQtyW + colPriceW);
+
+      const headerY = doc.y;
+      doc.fontSize(10)
+        .text("Item", leftX, headerY, { width: colItemW })
+        .text("Qty", leftX + colItemW, headerY, { width: colQtyW, align: "center" })
+        .text("Price", leftX + colItemW + colQtyW, headerY, { width: colPriceW, align: "right" })
+        .text("Total", leftX + colItemW + colQtyW + colPriceW, headerY, { width: colTotalW, align: "right" });
+
+      doc.moveDown(0.3);
+      doc.moveTo(leftX, doc.y).lineTo(leftX + maxWidth, doc.y).stroke();
       doc.moveDown(0.2);
-      doc.text(`Name: ${clean(order.shipping.fullName)}`);
-      doc.text(`Phone: ${clean(order.shipping.phone)}`);
-      doc.text(`Email: ${clean(order.shipping.email)}`);
-      doc.text(`City: ${clean(order.shipping.city)}`);
-       doc.text(`Address: ${clean(order.shipping.addressLine1)}`);
-      doc.text(`notes: ${clean(order.shipping.addressLine2)}`);
-    //   const addr = [order.shipping.addressLine1, order.shipping.addressLine2]
-    //     .filter(Boolean)
-    //     .map(clean)
-    //     .join(" ");
-    //   if (addr) doc.text(`Address: ${addr}`);
-     }
 
-    doc.moveDown();
-    doc.text("Items:");
-    doc.moveDown(0.2);
+      // Table rows - preserve spaces in item names
+      doc.fontSize(10);
+      (order.items || []).forEach((item) => {
+        const name = preserveSpaces(clean(item.name || (item.product && item.product.name) || "Unknown"));
+        const opt = item.optionName ? ` (${preserveSpaces(clean(item.optionName))})` : "";
+        const fullName = `${name}${opt}`;
+        const qty = String(item.quantity || 0);
+        const price = String(item.price || 0);
+        const total = String((item.quantity || 0) * (item.price || 0));
 
-    // Items: decode names/options
-    (order.items || []).forEach((item) => {
-      const itemName = clean(item.name || (item.product && item.product.name) || "Unnamed");
-      const opt = item.optionName ? ` (${clean(item.optionName)})` : "";
-      const line = `${clean(item.quantity)} x ${itemName}${opt} - ${clean(item.price)}₪`;
-      doc.text(line);
-    });
+        const rowY = doc.y;
+        doc.text(fullName, leftX, rowY, { width: colItemW })
+          .text(qty, leftX + colItemW, rowY, { width: colQtyW, align: "center" })
+          .text(`${price}₪`, leftX + colItemW + colQtyW, rowY, { width: colPriceW, align: "right" })
+          .text(`${total}₪`, leftX + colItemW + colQtyW + colPriceW, rowY, { width: colTotalW, align: "right" });
 
-    doc.moveDown();
-    doc.text("Totals:");
-    doc.text(`Subtotal: ${clean(order.totals?.subtotal)}`);
-    doc.text(`Shipping: ${clean(order.totals?.shipping)}`);
-    doc.text(`Grand Total: ${clean(order.totals?.grandTotal)}`);
+        doc.moveDown(0.6);
+      });
 
-    // Payment method
-    doc.moveDown();
-    doc.text("Payment Method:");
-    const paymentMethod = order.payment?.method || "Unknown";
-    const paymentText = paymentMethod === "cc" ? "Credit Card" : paymentMethod === "cod" ? "Cash on Delivery" : paymentMethod;
-    doc.text(`${clean(paymentText)}`);
+      doc.moveTo(leftX, doc.y).lineTo(leftX + maxWidth, doc.y).stroke();
+      doc.moveDown(1.0);
 
-    doc.end();
+      // Summary
+      doc.fontSize(12).text("Summary:", leftX, doc.y, { width: maxWidth, underline: true });
+      doc.moveDown(0.6);
+      doc.fontSize(11).text(`Subtotal: ${clean(order.totals?.subtotal)}₪`, leftX, doc.y, { width: maxWidth });
+      doc.moveDown(0.4);
+      doc.text(`Shipping: ${clean(order.totals?.shipping)}₪`, leftX, doc.y, { width: maxWidth });
+      doc.moveDown(0.4);
+      doc.fontSize(12).text(`Grand Total: ${clean(order.totals?.grandTotal)}₪`, leftX, doc.y, { width: maxWidth, underline: true });
+      doc.moveDown(0.8);
+
+      // Payment method
+      const pm = order.payment?.method || "Unknown";
+      const pmText = pm === "cc" ? "Credit Card" : pm === "cod" ? "Cash on Delivery" : pm;
+      doc.fontSize(11).text(`Payment method: ${pmText}`, leftX, doc.y, { width: maxWidth });
+
+      doc.end();
+    } catch (error) {
+      console.error("[PDF] Error creating PDF:", error);
+      reject(error);
+    }
   });
-}
+};
+
+
 
 /**
  * CHECKOUT
