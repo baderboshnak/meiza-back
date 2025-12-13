@@ -254,6 +254,8 @@ const mongoose = require("mongoose");
 const PDFDocument = require("pdfkit");
 const fs = require("fs");
 const path = require("path");
+const he = require("he"); // <-- decode HTML entities / entities
+const iconv = require("iconv-lite"); // <-- new
 const Cart = require("../models/cart");
 const Order = require("../models/order");
 const Product = require("../models/products");
@@ -272,44 +274,95 @@ const router = express.Router();
 // Function to create PDF
 const createPDF = (order) => {
   return new Promise((resolve, reject) => {
-    // Define the folder and file path
     const uploadDir = path.join(__dirname, "../uploads");
-
-    // Check if the uploads directory exists, and if not, create it
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
     }
-
     const filePath = path.join(uploadDir, `order_${order._id}.pdf`);
-
-    // Create a new PDF document
     const doc = new PDFDocument();
-    
-    // Pipe the PDF to a writable stream
-    doc.pipe(fs.createWriteStream(filePath));
 
-    // Add content to the PDF
-    doc.fontSize(16).text("Order Details", { underline: true });
-    doc.text(`Order ID: ${order._id}`);
-    doc.text(`Shipping Address: ${order.shipping.addressLine1}, ${order.shipping.city}`);
+    // prefer a Hebrew-capable font if present
+    const fonts = [
+      path.join(__dirname, "../assets/fonts/NotoSansHebrew-VariableFont_wdth,wght.ttf"),
+      path.join(__dirname, "../assets/fonts/NotoSansHebrew-Regular.ttf"),
+      path.join(__dirname, "../assets/fonts/DejaVuSans.ttf"),
+    ];
+    const fontPath = fonts.find((p) => fs.existsSync(p));
+    if (fontPath) {
+      console.log("[PDF] Using font:", fontPath);
+      doc.registerFont("Main", fontPath);
+      doc.font("Main");
+    } else {
+      console.warn("[PDF] No Hebrew font found in assets/fonts. Text may render incorrectly.");
+      doc.font("Helvetica");
+    }
 
-    // Add order items
-    doc.text("\nItems:\n");
-    order.items.forEach((item) => {
-      doc.text(`${item.quantity} x ${item.name} - ${item.price}`);
+    // helper to decode + normalize text
+    const clean = (v) => {
+      if (v === undefined || v === null) return "-";
+      try {
+        // strings are already UTF-8 in DB, just decode HTML entities and normalize
+        let s = he.decode(String(v));
+        return s.normalize("NFC");
+      } catch (err) {
+        return String(v);
+      }
+    };
+
+    // create writable stream and listen to its events
+    const stream = fs.createWriteStream(filePath);
+    stream.on("finish", () => resolve(filePath));
+    stream.on("error", (err) => reject(err));
+
+    doc.pipe(stream);
+
+    doc.fontSize(18).text("Order Details", { underline: true });
+    doc.moveDown();
+
+    doc.fontSize(12).text(`Order ID: ${clean(order._id)}`);
+
+    // Shipping / customer details (cleaned)
+    if (order.shipping) {
+      doc.moveDown(0.2);
+      doc.text(`Name: ${clean(order.shipping.fullName)}`);
+      doc.text(`Phone: ${clean(order.shipping.phone)}`);
+      doc.text(`Email: ${clean(order.shipping.email)}`);
+      doc.text(`City: ${clean(order.shipping.city)}`);
+       doc.text(`Address: ${clean(order.shipping.addressLine1)}`);
+      doc.text(`notes: ${clean(order.shipping.addressLine2)}`);
+    //   const addr = [order.shipping.addressLine1, order.shipping.addressLine2]
+    //     .filter(Boolean)
+    //     .map(clean)
+    //     .join(" ");
+    //   if (addr) doc.text(`Address: ${addr}`);
+     }
+
+    doc.moveDown();
+    doc.text("Items:");
+    doc.moveDown(0.2);
+
+    // Items: decode names/options
+    (order.items || []).forEach((item) => {
+      const itemName = clean(item.name || (item.product && item.product.name) || "Unnamed");
+      const opt = item.optionName ? ` (${clean(item.optionName)})` : "";
+      const line = `${clean(item.quantity)} x ${itemName}${opt} - ${clean(item.price)}₪`;
+      doc.text(line);
     });
 
-    // Add totals
-    doc.text("\nTotals:");
-    doc.text(`Subtotal: ${order.totals.subtotal}`);
-    doc.text(`Shipping: ${order.totals.shipping}`);
-    doc.text(`Grand Total: ${order.totals.grandTotal}`);
+    doc.moveDown();
+    doc.text("Totals:");
+    doc.text(`Subtotal: ${clean(order.totals?.subtotal)}`);
+    doc.text(`Shipping: ${clean(order.totals?.shipping)}`);
+    doc.text(`Grand Total: ${clean(order.totals?.grandTotal)}`);
 
-    // Finalize the PDF and return the file path
+    // Payment method
+    doc.moveDown();
+    doc.text("Payment Method:");
+    const paymentMethod = order.payment?.method || "Unknown";
+    const paymentText = paymentMethod === "cc" ? "Credit Card" : paymentMethod === "cod" ? "Cash on Delivery" : paymentMethod;
+    doc.text(`${clean(paymentText)}`);
+
     doc.end();
-
-    doc.on("finish", () => resolve(filePath)); // Resolve with file path once PDF is finished
-    doc.on("error", reject); // Reject if there's an error
   });
 }
 
@@ -404,51 +457,61 @@ router.post("/checkout", optionalAuth, async (req, res) => {
     session.endSession();
     console.log("Transaction committed for order:", order._id);
 
-    // 6) Create PDF
-    const pdfFilePath = await createPDF(order);
-
-    // 7) Send emails (Debugging email sending)
-    try {
-      console.log("Sending admin email...");
-      if (process.env.ADMIN_EMAIL) {
-        const adminMail = buildOrderAdminEmail(order);
-        await sendEmail(
-          process.env.ADMIN_EMAIL,
-          adminMail.subject,
-          adminMail.text,
-          adminMail.html,
-          pdfFilePath
-        );
-        console.log("[MAIL] Admin email sent");
-      } else {
-        console.warn("[MAIL] ADMIN_EMAIL is not set in env");
-      }
-
-      console.log("Sending customer email...");
-      if (order.shipping.email) {
-        const custMail = buildOrderCustomerEmail(order);
-        await sendEmail(
-          order.shipping.email,
-          custMail.subject,
-          custMail.text,
-          custMail.html,
-          pdfFilePath
-        );
-        console.log("[MAIL] Customer email sent");
-      } else {
-        console.warn("[MAIL] No shipping.email on order, skipping customer email");
-      }
-    } catch (mailErr) {
-      console.error("[MAIL] Email send failed:", mailErr.message || mailErr);
-    }
-
-    // 8) Populate user for frontend (if any)
+    // respond to client immediately with populated order
     const populated = await Order.findById(order._id)
       .populate("user", "username name")
       .lean();
 
-    console.log("Checkout completed OK for order:", order._id);
-    return res.status(201).json(populated);
+    res.status(201).json(populated);
+    console.log("Response sent to client for order:", order._id);
+
+    // continue notification work in background (do NOT await)
+    (async () => {
+      try {
+        const pdfFilePath = await createPDF(order);
+
+        // emails
+        try {
+          console.log("Sending admin email...");
+          if (process.env.ADMIN_EMAIL) {
+            const adminMail = buildOrderAdminEmail(order);
+            await sendEmail(
+              process.env.ADMIN_EMAIL,
+              adminMail.subject,
+              adminMail.text,
+              adminMail.html,
+              pdfFilePath
+            );
+            console.log("[MAIL] Admin email sent");
+          } else {
+            console.warn("[MAIL] ADMIN_EMAIL is not set in env");
+          }
+
+          if (order.shipping.email) {
+            console.log("Sending customer email...");
+            const custMail = buildOrderCustomerEmail(order);
+            await sendEmail(
+              order.shipping.email,
+              custMail.subject,
+              custMail.text,
+              custMail.html,
+              pdfFilePath
+            );
+            console.log("[MAIL] Customer email sent");
+          } else {
+            console.warn("[MAIL] No shipping.email on order, skipping customer email");
+          }
+        } catch (mailErr) {
+          console.error("[BACKGROUND][MAIL] Email send failed:", mailErr?.message || mailErr);
+        }
+
+        // any other background notifications (WhatsApp etc.) can be placed here
+      } catch (bgErr) {
+        console.error("[BACKGROUND] createPDF/notifications failed for order", order._id, bgErr);
+      }
+    })();
+
+    return; // handler already responded
   } catch (e) {
     await session.abortTransaction();
     session.endSession();
