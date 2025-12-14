@@ -297,28 +297,24 @@ const createPDF = (order) => {
       const maxWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
 
       const drawLabelValue = (label, value) => {
-        const labelText = `${label}: `;
-        const y = doc.y;
+  const v = cleanLocal(value);
+  const line = `${label}: ${v}`;
 
-        // label in default font (HebFont is fine)
-        if (hebFontPath) setFont("HebFont");
-        doc.text(labelText, leftX, y, { lineBreak: false });
+  const y = doc.y;
 
-        const labelW = doc.widthOfString(labelText);
-        const boxX = leftX + labelW;
-        const boxW = maxWidth - labelW;
+  if (hasRTL(line)) {
+    // draw whole line as RTL so label stays close to the value
+    const h = drawRTLBox(line, leftX, y, maxWidth);
+    doc.y = y + h;
+    doc.moveDown(0.5);
+  } else {
+    // normal LTR
+    if (hebFontPath) setFont("HebFont");
+    doc.text(line, leftX, y, { width: maxWidth });
+    doc.moveDown(0.5);
+  }
+};
 
-        const v = cleanLocal(value);
-
-        if (hasRTL(v)) {
-          const h = drawRTLBox(v, boxX, y, boxW);
-          doc.y = y + h;
-          doc.moveDown(0.5);
-        } else {
-          doc.text(v, boxX, y, { width: boxW });
-          doc.moveDown(0.5);
-        }
-      };
 
       // Title
       doc.fontSize(18).text("Order Details", leftX, doc.y, { width: maxWidth, underline: true });
