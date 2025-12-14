@@ -12,8 +12,10 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "arabic-persian-reshaper": "^1.0.1",
     "axios": "^1.13.2",
     "bcryptjs": "^3.0.2",
+    "bidi-js": "^1.0.3",
     "cloudinary": "^2.8.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
@@ -29,6 +31,7 @@
     "nodemon": "^3.1.10",
     "pdfkit": "^0.17.2",
     "resend": "^6.5.2",
-    "twilio": "^5.10.6"
+    "twilio": "^5.10.6",
+    "unicode-bidirectional": "^2.0.5"
   }
 }
