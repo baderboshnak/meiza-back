@@ -251,69 +251,97 @@ const createPDF = (order) => {
 
       // Draw RTL text inside a box (x,y,width)
       const drawRTLBox = (text, x, y, width) => {
-        const raw = String(text || "");
-        const paragraphs = raw.split(/\r?\n/);
-        const lineH = doc.currentLineHeight(true);
-        let yy = y;
+  const raw = String(text || "");
+  const paragraphs = raw.split(/\r?\n/);
+  const lineH = doc.currentLineHeight(true);
+  let yy = y;
 
-        for (const p of paragraphs) {
-          const pts = tokenize(p).map(classify).map(prepToken);
-          const lines = wrapTokens(pts, width);
+  const trimLine = (lineTokens) => {
+    let start = 0;
+    let end = lineTokens.length - 1;
+    while (start <= end && lineTokens[start].kind === "space") start++;
+    while (end >= start && lineTokens[end].kind === "space") end--;
+    return { start, end };
+  };
 
-          for (const lineTokens of lines) {
-            let cursorX = x + width; // right edge
+  for (const p of paragraphs) {
+    const pts = tokenize(p).map(classify).map(prepToken);
+    const lines = wrapTokens(pts, width);
 
-            for (const pt of lineTokens) {
-              if (pt.kind === "space") {
-                cursorX -= tokenWidth(pt);
-                continue;
-              }
+    for (const lineTokens of lines) {
+      const { start, end } = trimLine(lineTokens);
+      if (start > end) {
+        yy += lineH;
+        continue;
+      }
 
-              if (pt.font) setFont(pt.font);
+      // ✅ compute the REAL used width of this line (so it stays on the left)
+      let usedW = 0;
+      for (let i = start; i <= end; i++) usedW += tokenWidth(lineTokens[i]);
+      if (usedW > width) usedW = width;
 
-              if (pt.kind === "ltr") {
-                const tw = tokenWidth(pt);
-                cursorX -= tw;
-                doc.text(pt.text, cursorX, yy, { lineBreak: false });
-              } else {
-                for (const ch of Array.from(pt.text)) {
-                  const drawCh = MIRROR[ch] || ch;
-                  const one = { ...pt, text: drawCh };
-                  const cw = tokenWidth(one);
-                  cursorX -= cw;
-                  doc.text(drawCh, cursorX, yy, { lineBreak: false });
-                }
-              }
-            }
+      // ✅ start at x + usedW (NOT x + width)
+      let cursorX = x + usedW;
 
-            yy += lineH;
-          }
+      for (let i = start; i <= end; i++) {
+        const pt = lineTokens[i];
+
+        if (pt.kind === "space") {
+          cursorX -= tokenWidth(pt);
+          continue;
         }
 
-        return yy - y;
-      };
+        if (pt.font) setFont(pt.font);
+
+        if (pt.kind === "ltr") {
+          const tw = tokenWidth(pt);
+          cursorX -= tw;
+          doc.text(pt.text, cursorX, yy, { lineBreak: false });
+        } else {
+          for (const ch of Array.from(pt.text)) {
+            const drawCh = MIRROR[ch] || ch;
+            const one = { ...pt, text: drawCh };
+            const cw = tokenWidth(one);
+            cursorX -= cw;
+            doc.text(drawCh, cursorX, yy, { lineBreak: false });
+          }
+        }
+      }
+
+      yy += lineH;
+    }
+  }
+
+  return yy - y;
+};
+
 
       const leftX = doc.page.margins.left;
       const maxWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
 
-      const drawLabelValue = (label, value) => {
-  const v = cleanLocal(value);
-  const line = `${label}: ${v}`;
-
+     const drawLabelValue = (label, value) => {
   const y = doc.y;
+  const labelText = `${label}:`;
+  const v = cleanLocal(value);
 
-  if (hasRTL(line)) {
-    // draw whole line as RTL so label stays close to the value
-    const h = drawRTLBox(line, leftX, y, maxWidth);
+  if (hebFontPath) setFont("HebFont");
+  doc.text(labelText, leftX, y, { lineBreak: false });
+
+  const gap = 6;
+  const labelW = doc.widthOfString(labelText);
+  const boxX = leftX + labelW + gap;
+  const boxW = maxWidth - labelW - gap;
+
+  if (hasRTL(v)) {
+    const h = drawRTLBox(v, boxX, y, boxW); // ✅ now it stays left
     doc.y = y + h;
     doc.moveDown(0.5);
   } else {
-    // normal LTR
-    if (hebFontPath) setFont("HebFont");
-    doc.text(line, leftX, y, { width: maxWidth });
+    doc.text(v, boxX, y, { width: boxW });
     doc.moveDown(0.5);
   }
 };
+
 
 
       // Title
