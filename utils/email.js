@@ -1,13 +1,7 @@
 // utils/email.js
-const { Resend } = require("resend");
-
 const fs = require("fs");
 const path = require("path");
-
-// Better: use env var in Render
-const resend = new Resend(
-  process.env.RESEND_API_KEY || "re_FCVimFQg_BFS6h7vHN4VpL2grPSDXANes"
-);
+const { Resend } = require("resend");
 
 // -------- BASE TEMPLATE (LTR / RTL) --------
 function baseTemplate({ title, intro, content, footer, rtl = false }) {
@@ -63,16 +57,13 @@ function baseTemplate({ title, intro, content, footer, rtl = false }) {
 }
 
 // ---------- ORDER TEMPLATES ----------
-
 function buildOrderAdminEmail(order) {
   const itemsRows = (order.items || [])
     .map(
       (it) => `
       <tr>
         <td style="padding:8px 0;border-bottom:1px solid #eee;">
-          <div style="font-size:14px;font-weight:600;color:#111;">${
-            it.name
-          }</div>
+          <div style="font-size:14px;font-weight:600;color:#111;">${it.name}</div>
           ${
             it.optionName
               ? `<div style="font-size:12px;color:#777;">${it.optionName}</div>`
@@ -202,7 +193,7 @@ function buildOrderCustomerEmail(order) {
     intro: `היי ${order.shipping?.fullName || ""}, ההזמנה שלך התקבלה!`,
     content,
     footer: "אם יש לכם שאלות, אפשר לענות למייל הזה ונחזור אליכם בהקדם.",
-    rtl: true, // חשוב: מצב ימין-לשמאל
+    rtl: true,
   });
 
   const text = `
@@ -221,7 +212,6 @@ function buildOrderCustomerEmail(order) {
 }
 
 // ---------- CONTACT TEMPLATE (ADMIN) ----------
-
 function buildContactAdminEmail({ name, email, message }) {
   const safeMsg = (message || "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
@@ -265,8 +255,15 @@ ${message}
 }
 
 // ---------- GENERIC SENDER ----------
-
 async function sendEmail(to, subject, text, html, attachmentPath = null) {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) {
+    // This is a clear error and avoids crashing at server start
+    throw new Error("Missing RESEND_API_KEY env var");
+  }
+
+  const resend = new Resend(key);
+
   const from =
     process.env.EMAIL_FROM || "Meiza Heritage <no-reply@meiza.online>";
 
@@ -280,35 +277,20 @@ async function sendEmail(to, subject, text, html, attachmentPath = null) {
       `<pre style="font-family: sans-serif; white-space: pre-wrap;">${text}</pre>`,
   };
 
-  // Attach PDF if provided
   if (attachmentPath) {
-    const attachment = fs.readFileSync(attachmentPath); // Read PDF file
+    const attachment = fs.readFileSync(attachmentPath);
     payload.attachments = [
       {
-        filename: path.basename(attachmentPath), // Set the PDF filename
-        content: attachment, // Set the content of the attachment
-        type: "application/pdf", // MIME type for PDF
+        filename: path.basename(attachmentPath),
+        content: attachment,
+        type: "application/pdf",
       },
     ];
   }
 
-  try {
-    console.log("Sending email...");
-    const result = await resend.emails.send(payload);
-    console.log("[MAIL] Resend response:"); // Log the response
-    if (result.error) {
-      console.error("[MAIL] Resend API error:", result.error);
-      throw new Error(result.error.message || "Resend email failed");
-    }
-    console.log("[MAIL] Email sent successfully:");
-    return result;
-  } catch (err) {
-    console.error("[MAIL] Resend error:", err?.response?.data || err.message || err);
-    if (err?.response) {
-      console.error("[MAIL] Resend API response:", err.response);
-    }
-    throw err;
-  }
+  const result = await resend.emails.send(payload);
+  if (result?.error) throw new Error(result.error.message || "Resend email failed");
+  return result;
 }
 
 module.exports = {

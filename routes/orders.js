@@ -5,6 +5,8 @@ const PDFDocument = require("pdfkit");
 const fs = require("fs");
 const path = require("path");
 const he = require("he");
+const os = require("os");
+const crypto = require("crypto");
 
 const Cart = require("../models/cart");
 const Order = require("../models/order");
@@ -76,33 +78,123 @@ const fmt = (v) => {
   const s = clean(v);
   return RTL_RE.test(s) ? bidiVisual(s) : s;
 };
-const MIRROR = {
-  "(": ")",
-  ")": "(",
-  "[": "]",
-  "]": "[",
-  "{": "}",
-  "}": "{",
-  "<": ">",
-  ">": "<",
-};
+
+// =============================
+// Cloudinary -> JPG + downloader
+// =============================
+function cloudinaryToJpg(url, { w = 200, h = 200, q = "auto", crop = "fill" } = {}) {
+  if (!url || typeof url !== "string") return null;
+  if (!/^https?:\/\//i.test(url)) return null;
+  if (!url.includes("res.cloudinary.com")) return url; // not cloudinary: keep url
+
+  const parts = url.split("/upload/");
+  if (parts.length !== 2) return url;
+
+  // Force JPG + resize (PDFKit-friendly; avoids WebP issues)
+  // Example:
+  // .../upload/v123/...webp  -> .../upload/f_jpg,q_auto,w_200,h_200,c_fill/v123/...webp
+  const transform = `f_jpg,q_${q},w_${w},h_${h},c_${crop}`;
+  return `${parts[0]}/upload/${transform}/${parts[1]}`;
+}
+
+let fetchFn = global.fetch;
+if (!fetchFn) {
+  try {
+    fetchFn = require("node-fetch"); // only used if Node < 18
+  } catch {
+    // ignore
+  }
+}
+
+async function downloadImageToTemp(url, timeoutMs = 8000) {
+  if (!url || typeof url !== "string") return null;
+  if (!/^https?:\/\//i.test(url)) return null;
+  if (!fetchFn) throw new Error("fetch is not available. Use Node 18+ or install node-fetch.");
+
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetchFn(url, { signal: controller.signal });
+    if (!res.ok) return null;
+
+    const ct = (res.headers?.get?.("content-type") || "").toLowerCase();
+    if (!ct.startsWith("image/")) return null;
+
+    // node-fetch vs native fetch compatibility
+    const buf = Buffer.from(await (res.arrayBuffer ? res.arrayBuffer() : res.buffer()));
+
+    const ext =
+      ct.includes("png") ? "png" :
+      ct.includes("jpeg") || ct.includes("jpg") ? "jpg" :
+      "img";
+
+    const name = `order-img-${crypto.randomBytes(8).toString("hex")}.${ext}`;
+    const tmpPath = path.join(os.tmpdir(), name);
+    await fs.promises.writeFile(tmpPath, buf);
+    return tmpPath;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+function safeUnlink(p) {
+  if (!p) return;
+  fs.promises.unlink(p).catch(() => {});
+}
 
 // ===== PDF creator =====
-// Function to create PDF (FIXED RTL for Hebrew in PDFKit)
-// Function to create PDF (Hebrew + Arabic fixed)
+// Function to create PDF (Hebrew + Arabic fixed + Cloudinary Images)
 const createPDF = (order) => {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
+    let settled = false;
+    const imgCache = new Map(); // url -> tmpPath
+
+    const safeResolve = (v) => {
+      if (settled) return;
+      settled = true;
+      resolve(v);
+    };
+    const safeReject = (e) => {
+      if (settled) return;
+      settled = true;
+      reject(e);
+    };
+
+    const cleanupTempImages = async () => {
+      const paths = Array.from(imgCache.values());
+      await Promise.all(paths.map((p) => fs.promises.unlink(p).catch(() => {})));
+      imgCache.clear();
+    };
+
+    let doc = null;
+    let stream = null;
+    let filePath = null;
+
     try {
       const uploadDir = path.join(__dirname, "../uploads");
       if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
-      const filePath = path.join(uploadDir, `order_${order._id}.pdf`);
-      const stream = fs.createWriteStream(filePath);
+      filePath = path.join(uploadDir, `order_${order._id}.pdf`);
+      stream = fs.createWriteStream(filePath);
 
-      stream.on("finish", () => resolve(filePath));
-      stream.on("error", (err) => reject(err));
+      stream.on("finish", async () => {
+        try {
+          await cleanupTempImages();
+        } catch {}
+        safeResolve(filePath);
+      });
 
-      const doc = new PDFDocument({ margin: 50, size: "A4" });
+      stream.on("error", async (err) => {
+        try {
+          await cleanupTempImages();
+        } catch {}
+        safeReject(err);
+      });
+
+      doc = new PDFDocument({ margin: 50, size: "A4" });
       doc.pipe(stream);
       doc.fillColor("black");
 
@@ -213,13 +305,11 @@ const createPDF = (order) => {
           const tw = tokenWidth(pt);
 
           if (tw > width && pt.text.length > 1) {
-            // flush current line
             if (line.length) {
               lines.push(line);
               line = [];
               w = 0;
             }
-            // split to chars
             for (const ch of Array.from(pt.text)) {
               const one = { ...pt, text: ch };
               const cw = tokenWidth(one);
@@ -251,98 +341,95 @@ const createPDF = (order) => {
 
       // Draw RTL text inside a box (x,y,width)
       const drawRTLBox = (text, x, y, width) => {
-  const raw = String(text || "");
-  const paragraphs = raw.split(/\r?\n/);
-  const lineH = doc.currentLineHeight(true);
-  let yy = y;
+        const raw = String(text || "");
+        const paragraphs = raw.split(/\r?\n/);
+        const lineH = doc.currentLineHeight(true);
+        let yy = y;
 
-  const trimLine = (lineTokens) => {
-    let start = 0;
-    let end = lineTokens.length - 1;
-    while (start <= end && lineTokens[start].kind === "space") start++;
-    while (end >= start && lineTokens[end].kind === "space") end--;
-    return { start, end };
-  };
+        const trimLine = (lineTokens) => {
+          let start = 0;
+          let end = lineTokens.length - 1;
+          while (start <= end && lineTokens[start].kind === "space") start++;
+          while (end >= start && lineTokens[end].kind === "space") end--;
+          return { start, end };
+        };
 
-  for (const p of paragraphs) {
-    const pts = tokenize(p).map(classify).map(prepToken);
-    const lines = wrapTokens(pts, width);
+        for (const p of paragraphs) {
+          const pts = tokenize(p).map(classify).map(prepToken);
+          const lines = wrapTokens(pts, width);
 
-    for (const lineTokens of lines) {
-      const { start, end } = trimLine(lineTokens);
-      if (start > end) {
-        yy += lineH;
-        continue;
-      }
+          for (const lineTokens of lines) {
+            const { start, end } = trimLine(lineTokens);
+            if (start > end) {
+              yy += lineH;
+              continue;
+            }
 
-      // ✅ compute the REAL used width of this line (so it stays on the left)
-      let usedW = 0;
-      for (let i = start; i <= end; i++) usedW += tokenWidth(lineTokens[i]);
-      if (usedW > width) usedW = width;
+            // ✅ compute the REAL used width of this line (so it stays on the left)
+            let usedW = 0;
+            for (let i = start; i <= end; i++) usedW += tokenWidth(lineTokens[i]);
+            if (usedW > width) usedW = width;
 
-      // ✅ start at x + usedW (NOT x + width)
-      let cursorX = x + usedW;
+            // ✅ start at x + usedW (NOT x + width)
+            let cursorX = x + usedW;
 
-      for (let i = start; i <= end; i++) {
-        const pt = lineTokens[i];
+            for (let i = start; i <= end; i++) {
+              const pt = lineTokens[i];
 
-        if (pt.kind === "space") {
-          cursorX -= tokenWidth(pt);
-          continue;
-        }
+              if (pt.kind === "space") {
+                cursorX -= tokenWidth(pt);
+                continue;
+              }
 
-        if (pt.font) setFont(pt.font);
+              if (pt.font) setFont(pt.font);
 
-        if (pt.kind === "ltr") {
-          const tw = tokenWidth(pt);
-          cursorX -= tw;
-          doc.text(pt.text, cursorX, yy, { lineBreak: false });
-        } else {
-          for (const ch of Array.from(pt.text)) {
-            const drawCh = MIRROR[ch] || ch;
-            const one = { ...pt, text: drawCh };
-            const cw = tokenWidth(one);
-            cursorX -= cw;
-            doc.text(drawCh, cursorX, yy, { lineBreak: false });
+              if (pt.kind === "ltr") {
+                const tw = tokenWidth(pt);
+                cursorX -= tw;
+                doc.text(pt.text, cursorX, yy, { lineBreak: false });
+              } else {
+                for (const ch of Array.from(pt.text)) {
+                  const drawCh = MIRROR[ch] || ch;
+                  const one = { ...pt, text: drawCh };
+                  const cw = tokenWidth(one);
+                  cursorX -= cw;
+                  doc.text(drawCh, cursorX, yy, { lineBreak: false });
+                }
+              }
+            }
+
+            yy += lineH;
           }
         }
-      }
 
-      yy += lineH;
-    }
-  }
-
-  return yy - y;
-};
-
+        return yy - y;
+      };
 
       const leftX = doc.page.margins.left;
       const maxWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
 
-     const drawLabelValue = (label, value) => {
-  const y = doc.y;
-  const labelText = `${label}:`;
-  const v = cleanLocal(value);
+      const drawLabelValue = (label, value) => {
+        const y = doc.y;
+        const labelText = `${label}:`;
+        const v = cleanLocal(value);
 
-  if (hebFontPath) setFont("HebFont");
-  doc.text(labelText, leftX, y, { lineBreak: false });
+        if (hebFontPath) setFont("HebFont");
+        doc.text(labelText, leftX, y, { lineBreak: false });
 
-  const gap = 6;
-  const labelW = doc.widthOfString(labelText);
-  const boxX = leftX + labelW + gap;
-  const boxW = maxWidth - labelW - gap;
+        const gap = 6;
+        const labelW = doc.widthOfString(labelText);
+        const boxX = leftX + labelW + gap;
+        const boxW = maxWidth - labelW - gap;
 
-  if (hasRTL(v)) {
-    const h = drawRTLBox(v, boxX, y, boxW); // ✅ now it stays left
-    doc.y = y + h;
-    doc.moveDown(0.5);
-  } else {
-    doc.text(v, boxX, y, { width: boxW });
-    doc.moveDown(0.5);
-  }
-};
-
-
+        if (hasRTL(v)) {
+          const h = drawRTLBox(v, boxX, y, boxW);
+          doc.y = y + h;
+          doc.moveDown(0.5);
+        } else {
+          doc.text(v, boxX, y, { width: boxW });
+          doc.moveDown(0.5);
+        }
+      };
 
       // Title
       doc.fontSize(18).text("Order Details", leftX, doc.y, { width: maxWidth, underline: true });
@@ -366,21 +453,23 @@ const createPDF = (order) => {
       doc.fontSize(13).text("Items:", leftX, doc.y, { width: maxWidth, underline: true });
       doc.moveDown(0.4);
 
-      // Table columns
-      const colItemW = Math.floor(maxWidth * 0.55);
+      // ===== TABLE COLUMNS (WITH IMAGE) =====
+      const colImgW = 60;
+      const colItemW = Math.floor(maxWidth * 0.46);
       const colQtyW = Math.floor(maxWidth * 0.12);
       const colPriceW = Math.floor(maxWidth * 0.16);
-      const colTotalW = maxWidth - (colItemW + colQtyW + colPriceW);
+      const colTotalW = maxWidth - (colImgW + colItemW + colQtyW + colPriceW);
 
       const drawHeader = () => {
         const y = doc.y;
         doc.fontSize(10);
         if (hebFontPath) setFont("HebFont");
 
-        doc.text("Item", leftX, y, { width: colItemW });
-        doc.text("Qty", leftX + colItemW, y, { width: colQtyW, align: "center" });
-        doc.text("Price", leftX + colItemW + colQtyW, y, { width: colPriceW, align: "right" });
-        doc.text("Total", leftX + colItemW + colQtyW + colPriceW, y, { width: colTotalW, align: "right" });
+        doc.text("Image", leftX, y, { width: colImgW });
+        doc.text("Item", leftX + colImgW, y, { width: colItemW });
+        doc.text("Qty", leftX + colImgW + colItemW, y, { width: colQtyW, align: "center" });
+        doc.text("Price", leftX + colImgW + colItemW + colQtyW, y, { width: colPriceW, align: "right" });
+        doc.text("Total", leftX + colImgW + colItemW + colQtyW + colPriceW, y, { width: colTotalW, align: "right" });
 
         doc.moveDown(0.3);
         doc.moveTo(leftX, doc.y).lineTo(leftX + maxWidth, doc.y).stroke();
@@ -399,7 +488,8 @@ const createPDF = (order) => {
       drawHeader();
       doc.fontSize(10);
 
-      (order.items || []).forEach((item) => {
+      // ===== ITEMS LOOP (async-friendly) =====
+      for (const item of (order.items || [])) {
         let nameRaw = cleanLocal(item.name || (item.product && item.product.name) || "Unknown");
         let optRaw = item.optionName ? cleanLocal(item.optionName) : "";
         if (optRaw && nameRaw.includes(optRaw)) optRaw = "";
@@ -422,19 +512,49 @@ const createPDF = (order) => {
           itemHeight = doc.heightOfString(fullRaw, { width: colItemW });
         }
 
-        const rowHeight = Math.max(itemHeight, doc.currentLineHeight(true)) + 6;
+        const imgBoxSize = 44;
+        const rowHeight = Math.max(itemHeight, imgBoxSize, doc.currentLineHeight(true)) + 6;
         ensureSpace(rowHeight);
 
-        if (hasRTL(fullRaw)) drawRTLBox(fullRaw, leftX, rowY, colItemW);
-        else doc.text(fullRaw, leftX, rowY, { width: colItemW, lineBreak: false });
+        // ---- IMAGE (Cloudinary URL -> forced JPG) ----
+        const rawImgUrl = item.img || null;
+        const imgUrl = cloudinaryToJpg(rawImgUrl, { w: 220, h: 220, crop: "fill" });
+
+        let tmpImg = null;
+        try {
+          if (imgUrl) {
+            tmpImg = imgCache.get(imgUrl);
+            if (!tmpImg || !fs.existsSync(tmpImg)) {
+              tmpImg = await downloadImageToTemp(imgUrl);
+              if (tmpImg) imgCache.set(imgUrl, tmpImg);
+            }
+          }
+
+          const imgX = leftX + 6;
+          const imgY = rowY + 2;
+
+          if (tmpImg && fs.existsSync(tmpImg)) {
+            doc.image(tmpImg, imgX, imgY, { fit: [imgBoxSize, imgBoxSize] });
+          } else {
+            doc.rect(imgX, imgY, imgBoxSize, imgBoxSize).strokeOpacity(0.2).stroke().strokeOpacity(1);
+          }
+        } catch {
+          // ignore image failures, continue rendering row
+        }
+
+        // ---- TEXT (shift right by image column) ----
+        const itemX = leftX + colImgW;
+
+        if (hasRTL(fullRaw)) drawRTLBox(fullRaw, itemX, rowY, colItemW);
+        else doc.text(fullRaw, itemX, rowY, { width: colItemW, lineBreak: false });
 
         if (hebFontPath) setFont("HebFont");
-        doc.text(qty, leftX + colItemW, rowY, { width: colQtyW, align: "center", lineBreak: false });
-        doc.text(`${price}₪`, leftX + colItemW + colQtyW, rowY, { width: colPriceW, align: "right", lineBreak: false });
-        doc.text(`${total}₪`, leftX + colItemW + colQtyW + colPriceW, rowY, { width: colTotalW, align: "right", lineBreak: false });
+        doc.text(qty, itemX + colItemW, rowY, { width: colQtyW, align: "center", lineBreak: false });
+        doc.text(`${price}₪`, itemX + colItemW + colQtyW, rowY, { width: colPriceW, align: "right", lineBreak: false });
+        doc.text(`${total}₪`, itemX + colItemW + colQtyW + colPriceW, rowY, { width: colTotalW, align: "right", lineBreak: false });
 
         doc.y = rowY + rowHeight;
-      });
+      }
 
       doc.moveTo(leftX, doc.y).lineTo(leftX + maxWidth, doc.y).stroke();
       doc.moveDown(1.0);
@@ -459,11 +579,16 @@ const createPDF = (order) => {
       doc.end();
     } catch (err) {
       console.error("[PDF] Error creating PDF:", err);
-      reject(err);
+      try {
+        await cleanupTempImages();
+      } catch {}
+      try {
+        if (doc) doc.end();
+      } catch {}
+      safeReject(err);
     }
   });
 };
-
 
 /**
  * CHECKOUT
@@ -518,7 +643,7 @@ router.post("/checkout", optionalAuth, async (req, res) => {
         optionId: i.optionId,
         name: i.name,
         optionName: i.optionName,
-        img: i.img,
+        img: i.img, // ✅ your Cloudinary URL
         price: i.price,
         quantity: i.quantity,
       })),
