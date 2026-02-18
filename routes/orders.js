@@ -217,7 +217,9 @@ const createPDF = (order) => {
       };
 
       const hasHebrew = (s) => /[\u0590-\u05FF]/.test(String(s || ""));
-      const hasArabic = (s) => /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/.test(String(s || ""));
+      const hasArabic = (s) => /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/.test(
+        String(s || "")
+      );
       const hasRTL = (s) => hasHebrew(s) || hasArabic(s);
 
       const findFirstExisting = (arr) => arr.find((p) => fs.existsSync(p)) || null;
@@ -267,9 +269,9 @@ const createPDF = (order) => {
 
       // ✅ IMPORTANT: group Arabic/Hebrew runs (don’t split into single letters)
       const tokenize = (s) =>
-        (String(s).match(
+        String(s).match(
           /(\s+|[A-Za-z0-9][A-Za-z0-9\-_.\/]*|[\u0590-\u05FF]+|[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]+|.)/g
-        ) || []);
+        ) || [];
 
       const classify = (raw) => {
         if (/^\s+$/.test(raw)) return { kind: "space", raw };
@@ -282,9 +284,8 @@ const createPDF = (order) => {
       const prepToken = (tok) => {
         if (tok.kind === "arabic") {
           const shaped = ArabicShaper ? ArabicShaper.convertArabic(tok.raw) : tok.raw;
-          return { ...tok, text: shaped, font: arFontPath ? "ArFont" : (hebFontPath ? "HebFont" : null) };
+          return { ...tok, text: shaped, font: arFontPath ? "ArFont" : hebFontPath ? "HebFont" : null };
         }
-        // Hebrew / LTR / punctuation can use Hebrew font (it supports Latin+digits too)
         return { ...tok, text: tok.raw, font: hebFontPath ? "HebFont" : null };
       };
 
@@ -365,12 +366,10 @@ const createPDF = (order) => {
               continue;
             }
 
-            // ✅ compute the REAL used width of this line (so it stays on the left)
             let usedW = 0;
             for (let i = start; i <= end; i++) usedW += tokenWidth(lineTokens[i]);
             if (usedW > width) usedW = width;
 
-            // ✅ start at x + usedW (NOT x + width)
             let cursorX = x + usedW;
 
             for (let i = start; i <= end; i++) {
@@ -468,8 +467,14 @@ const createPDF = (order) => {
         doc.text("Image", leftX, y, { width: colImgW });
         doc.text("Item", leftX + colImgW, y, { width: colItemW });
         doc.text("Qty", leftX + colImgW + colItemW, y, { width: colQtyW, align: "center" });
-        doc.text("Price", leftX + colImgW + colItemW + colQtyW, y, { width: colPriceW, align: "right" });
-        doc.text("Total", leftX + colImgW + colItemW + colQtyW + colPriceW, y, { width: colTotalW, align: "right" });
+        doc.text("Price", leftX + colImgW + colItemW + colQtyW, y, {
+          width: colPriceW,
+          align: "right",
+        });
+        doc.text("Total", leftX + colImgW + colItemW + colQtyW + colPriceW, y, {
+          width: colTotalW,
+          align: "right",
+        });
 
         doc.moveDown(0.3);
         doc.moveTo(leftX, doc.y).lineTo(leftX + maxWidth, doc.y).stroke();
@@ -482,6 +487,7 @@ const createPDF = (order) => {
           doc.addPage();
           if (hebFontPath) setFont("HebFont");
           drawHeader();
+          doc.moveDown(0.2);
         }
       };
 
@@ -489,7 +495,7 @@ const createPDF = (order) => {
       doc.fontSize(10);
 
       // ===== ITEMS LOOP (async-friendly) =====
-      for (const item of (order.items || [])) {
+      for (const item of order.items || []) {
         let nameRaw = cleanLocal(item.name || (item.product && item.product.name) || "Unknown");
         let optRaw = item.optionName ? cleanLocal(item.optionName) : "";
         if (optRaw && nameRaw.includes(optRaw)) optRaw = "";
@@ -500,8 +506,7 @@ const createPDF = (order) => {
         const price = String(item.price || 0);
         const total = String((item.quantity || 0) * (item.price || 0));
 
-        const rowY = doc.y;
-
+        // --- compute height first ---
         let itemHeight;
         if (hasRTL(fullRaw)) {
           const pts = tokenize(fullRaw).map(classify).map(prepToken);
@@ -514,7 +519,12 @@ const createPDF = (order) => {
 
         const imgBoxSize = 44;
         const rowHeight = Math.max(itemHeight, imgBoxSize, doc.currentLineHeight(true)) + 6;
+
+        // ✅ IMPORTANT FIX: ensure space BEFORE freezing rowY
         ensureSpace(rowHeight);
+
+        // ✅ rowY must be taken AFTER ensureSpace (because addPage changes doc.y)
+        const rowY = doc.y;
 
         // ---- IMAGE (Cloudinary URL -> forced JPG) ----
         const rawImgUrl = item.img || null;
@@ -550,9 +560,18 @@ const createPDF = (order) => {
 
         if (hebFontPath) setFont("HebFont");
         doc.text(qty, itemX + colItemW, rowY, { width: colQtyW, align: "center", lineBreak: false });
-        doc.text(`${price}₪`, itemX + colItemW + colQtyW, rowY, { width: colPriceW, align: "right", lineBreak: false });
-        doc.text(`${total}₪`, itemX + colItemW + colQtyW + colPriceW, rowY, { width: colTotalW, align: "right", lineBreak: false });
+        doc.text(`${price}₪`, itemX + colItemW + colQtyW, rowY, {
+          width: colPriceW,
+          align: "right",
+          lineBreak: false,
+        });
+        doc.text(`${total}₪`, itemX + colItemW + colQtyW + colPriceW, rowY, {
+          width: colTotalW,
+          align: "right",
+          lineBreak: false,
+        });
 
+        // advance cursor
         doc.y = rowY + rowHeight;
       }
 
@@ -589,6 +608,7 @@ const createPDF = (order) => {
     }
   });
 };
+
 
 /**
  * CHECKOUT
