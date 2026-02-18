@@ -6,6 +6,7 @@ yarn-error.log*
 pnpm-debug.log*
 
 
+Add-Content .gitignore "`n/uploads/`n*.pdf`n"
 
 # Logs
 logs/
