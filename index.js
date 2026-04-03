@@ -93,6 +93,10 @@ app.use((req, res, next) => {
   next();
 });
 // public routes
+
+const fixOptionIdsRoute = require("./routes/fixOptionIds");
+app.use("/maintenance", fixOptionIdsRoute);
+
 app.use("/products", productsRoute);
 app.use("/categories", categoriesRoute);
 app.use("/auth", authRouter);
